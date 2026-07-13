@@ -42,8 +42,9 @@ pub struct DecomposeInput {
     pub conditions: Vec<Entity>,
 }
 
+///
 #[derive(Component, Clone)]
-pub(crate) struct TypeErasedCompoundTask {
+pub struct TypeErasedCompoundTask {
     pub(crate) decompose: DecomposeId,
 }
 

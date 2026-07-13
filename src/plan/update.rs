@@ -46,7 +46,8 @@ pub struct ReplacePlan {
     _pd: PhantomData<()>,
 }
 
-pub(crate) fn update_plan(
+/// Observer that runs the logic for updating plans.
+pub fn update_plan(
     update: On<UpdatePlan>,
     mut commands: Commands,
     error_handler: Option<Res<DefaultErrorHandler>>,
@@ -59,7 +60,8 @@ pub(crate) fn update_plan(
     );
 }
 
-fn update_plan_inner(
+/// 
+pub fn update_plan_inner(
     update: In<UpdatePlan>,
     world: &mut World,
     mut plans: Local<QueryState<&PlanDomain>>,
