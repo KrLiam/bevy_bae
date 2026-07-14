@@ -18,57 +18,45 @@ impl CompoundTask for Select {
 fn decompose_select(
     In(mut ctx): In<DecomposeInput>,
     world: &mut World,
-    mut task_relations: Local<QueryState<&Tasks>>,
-    mut individual_tasks: Local<
+    mut q_task_lists: Local<QueryState<&Tasks>>,
+    mut q_tasks: Local<
         QueryState<
             (
                 Entity,
                 Has<Operator>,
                 Option<&TypeErasedCompoundTask>,
-                Option<&Conditions>,
-                Option<&Effects>,
             ),
             Or<(With<Operator>, With<TypeErasedCompoundTask>)>,
         >,
     >,
-    mut conditions: Local<QueryState<(Entity, &Condition)>>,
-    mut effects: Local<QueryState<(Entity, &Effect)>>,
-    mut individual_tasks_scratch: Local<
-        Vec<(
-            Entity,
-            bool,
-            Option<TypeErasedCompoundTask>,
-            Option<Conditions>,
-            Option<Effects>,
-        )>,
+    mut q_condition_lists: Local<QueryState<&Conditions>>,
+    mut q_conditions: Local<QueryState<(Entity, &Condition)>>,
+    mut q_effect_lists: Local<QueryState<&Effects>>,
+    mut q_effects: Local<QueryState<(Entity, &Effect)>>,
+    mut tasks_buffer: Local<
+        Vec<(Entity, bool, Option<TypeErasedCompoundTask>)>,
     >,
 ) -> DecomposeResult {
-    let Ok(tasks) = task_relations.get(world, ctx.compound_task) else {
+    let Ok(tasks) = q_task_lists.get(world, ctx.compound_task) else {
         return DecomposeResult::Failure;
     };
-    individual_tasks_scratch.extend(individual_tasks.iter_many(world, tasks).map(
-        |(task_entity, has_operator, compound_task, condition_relations, effect_relations)| {
-            (
-                task_entity,
-                has_operator,
-                compound_task.cloned(),
-                condition_relations.cloned(),
-                effect_relations.cloned(),
-            )
+    tasks_buffer.extend(q_tasks.iter_many(world, tasks).map(
+        |(task_entity, has_operator, compound_task)| {
+            (task_entity, has_operator, compound_task.cloned())
         },
     ));
 
     'task: for (
         i,
-        (task_entity, has_operator, compound_task, condition_relations, effect_relations),
-    ) in individual_tasks_scratch.drain(..).enumerate()
+        (task_entity, has_operator, compound_task),
+    ) in tasks_buffer.drain(..).enumerate()
     {
         let mtr = ctx.plan.mtr.clone().with(i as u16);
         if mtr > ctx.previous_mtr {
             return DecomposeResult::Rejection;
         }
-        if let Some(condition_relations) = condition_relations {
-            for (_, condition) in conditions.iter_many(world, condition_relations.iter()) {
+        if let Ok(condition_relations) = q_condition_lists.get(world, task_entity) {
+            for (_, condition) in q_conditions.iter_many(world, condition_relations.iter()) {
                 if !condition.is_fullfilled(&mut ctx.world_state) {
                     continue 'task;
                 }
@@ -104,8 +92,8 @@ fn decompose_select(
         if ctx.plan.is_empty() {
             return DecomposeResult::Failure;
         }
-        if let Some(effect_relations) = effect_relations {
-            for (_, effect) in effects.iter_many(world, effect_relations.iter()) {
+        if let Ok(effect_relations) = q_effect_lists.get(world, task_entity) {
+            for (_, effect) in q_effects.iter_many(world, effect_relations.iter()) {
                 effect.apply(&mut ctx.world_state);
             }
 

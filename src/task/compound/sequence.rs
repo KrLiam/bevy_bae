@@ -18,58 +18,51 @@ impl CompoundTask for Sequence {
 fn decompose_sequence(
     In(mut ctx): In<DecomposeInput>,
     world: &mut World,
-    mut task_relations: Local<QueryState<&Tasks>>,
-    mut individual_tasks: Local<
+    mut q_task_lists: Local<QueryState<&Tasks>>,
+    mut q_tasks: Local<
         QueryState<
             (
                 Entity,
                 Has<Operator>,
                 Option<&TypeErasedCompoundTask>,
-                Option<&Conditions>,
-                Option<&Effects>,
+                Has<Conditions>,
+                Has<Effects>,
             ),
             Or<(With<Operator>, With<TypeErasedCompoundTask>)>,
         >,
     >,
-    mut conditions: Local<QueryState<&Condition>>,
-    mut effects: Local<QueryState<&Effect>>,
-    mut individual_tasks_scratch: Local<
-        Vec<(
-            Entity,
-            bool,
-            Option<TypeErasedCompoundTask>,
-            Option<Conditions>,
-            Option<Effects>,
-        )>,
-    >,
+    mut q_condition_lists: Local<QueryState<&Conditions>>,
+    mut q_conditions: Local<QueryState<&Condition>>,
+    mut q_effect_lists: Local<QueryState<&Effects>>,
+    mut q_effects: Local<QueryState<&Effect>>,
+    mut tasks_buffer: Local<Vec<(Entity, bool, Option<TypeErasedCompoundTask>, bool, bool)>>,
 ) -> DecomposeResult {
-    let Ok(tasks) = task_relations.get(world, ctx.compound_task) else {
+    let Ok(tasks) = q_task_lists.get(world, ctx.compound_task) else {
         return DecomposeResult::Failure;
     };
-    individual_tasks_scratch.extend(individual_tasks.iter_many(world, tasks).map(
-        |(task_entity, has_operator, compound_task, condition_relations, effect_relations)| {
-            (
-                task_entity,
-                has_operator,
-                compound_task.cloned(),
-                condition_relations.cloned(),
-                effect_relations.cloned(),
-            )
+    if tasks.is_empty() { return DecomposeResult::Failure }
+
+    tasks_buffer.extend(q_tasks.iter_many(world, tasks).map(
+        |(task_entity, has_operator, compound_task, has_conditions, has_effects)| {
+            (task_entity, has_operator, compound_task.cloned(), has_conditions, has_effects)
         },
     ));
-    let mut found_anything = false;
-    for (task_entity, has_operator, compound_task, condition_relations, effect_relations) in
-        individual_tasks_scratch.drain(..)
+
+    for (task_entity, has_operator, compound_task, has_conditions, has_effects) in
+        tasks_buffer.drain(..)
     {
-        if let Some(condition_relations) = condition_relations {
-            for condition in conditions.iter_many(world, condition_relations.iter()) {
-                if !condition.is_fullfilled(&mut ctx.world_state) {
+        if has_conditions &&
+            let Ok(conditions_relation) = q_condition_lists.get(world, task_entity)
+        {
+            for condition in q_conditions.iter_many(world, conditions_relation.iter()) {
+                if !condition.is_fullfilled(&ctx.world_state) {
                     return DecomposeResult::Failure;
                 }
             }
 
             ctx.plan.steps.push(PlanStep::ValidateConditions(task_entity));
         }
+        
         if has_operator {
             ctx.plan.steps.push(PlanStep::RunOperator(task_entity));
         } else if let Some(compound_task) = compound_task {
@@ -78,8 +71,8 @@ fn decompose_sequence(
                 DecomposeInput {
                     planner: ctx.planner,
                     compound_task: task_entity,
-                    world_state: ctx.world_state.clone(),
-                    plan: ctx.plan.clone(),
+                    world_state: ctx.world_state,
+                    plan: ctx.plan,
                     previous_mtr: ctx.previous_mtr.clone(),
                 },
             );
@@ -98,21 +91,17 @@ fn decompose_sequence(
         if ctx.plan.is_empty() {
             return DecomposeResult::Failure;
         }
-        if let Some(effect_relations) = effect_relations {
-            for effect in effects.iter_many(world, effect_relations.iter()) {
+        if has_effects &&
+            let Ok(effects_relation) = q_effect_lists.get(world, task_entity) {
+            for effect in q_effects.iter_many(world, effects_relation.iter()) {
                 effect.apply(&mut ctx.world_state);
             }
             ctx.plan.steps.push(PlanStep::ApplyEffects(task_entity));
         }
-        found_anything = true;
     }
 
-    if found_anything {
-        DecomposeResult::Success {
-            plan: ctx.plan,
-            world_state: ctx.world_state,
-        }
-    } else {
-        DecomposeResult::Failure
+    DecomposeResult::Success {
+        plan: ctx.plan,
+        world_state: ctx.world_state,
     }
 }

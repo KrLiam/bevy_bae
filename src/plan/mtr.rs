@@ -3,11 +3,13 @@
 use core::cmp::Ordering;
 use core::fmt::{self, Display};
 
+use smallvec::*;
+
 use crate::prelude::*;
 
 /// Method Traversal Record
 #[derive(Clone, Default, Reflect, Debug, Deref, DerefMut)]
-pub struct Mtr(pub Vec<u16>);
+pub struct Mtr(pub SmallVec<[u16; 32]>);
 
 impl Display for Mtr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -30,7 +32,7 @@ impl Mtr {
 
     /// Creates an empty MTR that will be considered lower priority than any other MTR.
     pub fn none() -> Self {
-        Mtr(vec![])
+        Mtr(SmallVec::new())
     }
 }
 
@@ -66,16 +68,16 @@ mod tests {
 
     #[test]
     fn anything_is_better_than_nothing() {
-        let mtr1 = Mtr(vec![1, 2, 3]);
-        let mtr2 = Mtr(vec![]);
+        let mtr1 = Mtr(smallvec![1, 2, 3]);
+        let mtr2 = Mtr(smallvec![]);
 
         assert!(mtr1 < mtr2);
     }
 
     #[test]
     fn self_is_le_and_ge() {
-        let mtr1 = Mtr(vec![1, 2, 3]);
-        let mtr2 = Mtr(vec![1, 2, 3]);
+        let mtr1 = Mtr(smallvec![1, 2, 3]);
+        let mtr2 = Mtr(smallvec![1, 2, 3]);
 
         assert!(mtr1 <= mtr2);
         assert!(mtr1 >= mtr2);
@@ -83,48 +85,48 @@ mod tests {
 
     #[test]
     fn last_of_same_length_works() {
-        let mtr1 = Mtr(vec![1, 2, 2]);
-        let mtr2 = Mtr(vec![1, 2, 3]);
+        let mtr1 = Mtr(smallvec![1, 2, 2]);
+        let mtr2 = Mtr(smallvec![1, 2, 3]);
 
         assert!(mtr1 < mtr2);
     }
 
     #[test]
     fn mid_of_same_length_works() {
-        let mtr1 = Mtr(vec![1, 1, 3]);
-        let mtr2 = Mtr(vec![1, 2, 3]);
+        let mtr1 = Mtr(smallvec![1, 1, 3]);
+        let mtr2 = Mtr(smallvec![1, 2, 3]);
 
         assert!(mtr1 < mtr2);
     }
 
     #[test]
     fn start_of_same_length_works() {
-        let mtr1 = Mtr(vec![0, 2, 3]);
-        let mtr2 = Mtr(vec![1, 2, 3]);
+        let mtr1 = Mtr(smallvec![0, 2, 3]);
+        let mtr2 = Mtr(smallvec![1, 2, 3]);
 
         assert!(mtr1 < mtr2);
     }
 
     #[test]
     fn better_but_shorter_works() {
-        let mtr1 = Mtr(vec![1, 2, 3]);
-        let mtr2 = Mtr(vec![1, 2, 4, 5]);
+        let mtr1 = Mtr(smallvec![1, 2, 3]);
+        let mtr2 = Mtr(smallvec![1, 2, 4, 5]);
 
         assert!(mtr1 < mtr2);
     }
 
     #[test]
     fn better_but_longer_works() {
-        let mtr1 = Mtr(vec![1, 2, 3, 5]);
-        let mtr2 = Mtr(vec![1, 2, 4]);
+        let mtr1 = Mtr(smallvec![1, 2, 3, 5]);
+        let mtr2 = Mtr(smallvec![1, 2, 4]);
 
         assert!(mtr1 < mtr2);
     }
 
     #[test]
     fn same_but_longer_is_equal() {
-        let mtr1 = Mtr(vec![1, 2, 3]);
-        let mtr2 = Mtr(vec![1, 2, 3, 5]);
+        let mtr1 = Mtr(smallvec![1, 2, 3]);
+        let mtr2 = Mtr(smallvec![1, 2, 3, 5]);
 
         assert!(mtr1 == mtr2);
     }
