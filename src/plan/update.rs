@@ -7,7 +7,7 @@ use core::marker::PhantomData;
 use crate::plan::{PlanDomain, PlanStep};
 use crate::plan::mtr::Mtr;
 use crate::prelude::*;
-use crate::task::compound::{DecomposeInput, DecomposeResult, TypeErasedCompoundTask};
+use crate::task::compound::{Decompose, DecomposeContext, DecomposeInput, DecomposeResult, TypeErasedCompoundTask};
 
 /// [`EntityEvent`] for updating a plan. Trigger this on an entity with a [`Plan`] to update its plan.
 /// Updating it will only have an effect if the new plan found has a higher priority than the current one.
@@ -65,13 +65,13 @@ pub fn update_plan_inner(
     update: In<UpdatePlan>,
     world: &mut World,
     mut plans: Local<QueryState<&PlanDomain>>,
-    mut conditions: Local<QueryState<(Entity, &Condition)>>,
     mut tasks: Local<
         QueryState<
             (Entity, Has<Operator>, Option<&TypeErasedCompoundTask>),
             Or<(With<Operator>, With<TypeErasedCompoundTask>)>,
         >,
     >,
+    mut d: Local<Decompose>,
 ) -> Result {
     let executor = update.entity;
     let Ok(domain) = plans.get(world, executor)
@@ -81,21 +81,8 @@ pub fn update_plan_inner(
         PlanDomain::Entity(entity) => *entity,
     };
 
-    let mut world_state = world.entity(update.entity).props().clone();
-    let mut initial_conditions = Vec::new();
-    let mut conditions_entity = None;
-    if let Some(condition_relations) = world.get::<Conditions>(root) {
-        conditions_entity = Some(root);
-
-        for (entity, condition) in conditions.iter_many(world, condition_relations) {
-            let is_fulfilled = condition.is_fullfilled(&mut world_state);
-            if !is_fulfilled {
-                world.entity_mut(root).insert(Plan::default());
-                return Ok(());
-            }
-            initial_conditions.push(entity);
-        }
-    }
+    let mut ctx = DecomposeContext::default();
+    ctx.world_state.extend(world.entity(update.entity).props());
 
     let Ok((entity, has_operator, compound_task)) =
         tasks
@@ -107,50 +94,35 @@ pub fn update_plan_inner(
         world.entity_mut(root).insert(Plan::default());
         return Err(BevyError::from("Called `update_plan` for an entity without any tasks. Ensure it has either an `Operator` or a `CompoundTask` like `Select` or `Sequence`".to_string()));
     };
-    let mut plan = if has_operator {
+
+    if let Some(false) = d.validate_conditions(world, entity, &mut ctx) {
+        ctx.plan.clear();
+    }
+    else if has_operator {
         // well that was easy: this root has just a single operator
-        let mut steps = vec![];
-
-        if let Some(entity) = conditions_entity {
-            steps.push(PlanStep::ValidateConditions(entity));
-        }
-        steps.push(PlanStep::RunOperator(entity));
-
-        Plan {
-            steps,
-            index: 0,
-            mtr: Mtr::default(),
-            status: None,
-        }
-    } else if let Some(compound_task) = compound_task {
-        let previous_mtr = if let Some(plan) = world.entity(root).get::<Plan>() {
+        ctx.plan.steps.push(PlanStep::RunOperator(entity));
+    }
+    else if let Some(compound_task) = compound_task {
+        ctx.previous_mtr = if let Some(plan) = world.entity(root).get::<Plan>() {
             plan.mtr.clone()
         } else {
             Mtr::none()
         };
-        let ctx = DecomposeInput {
-            world_state,
-            plan: Plan::default(),
+        
+        let input = DecomposeInput {
             planner: root,
             compound_task: root,
-            previous_mtr: previous_mtr.clone(),
+            ctx: &mut ctx as *mut _,
         };
-        let result = world.run_system_with(compound_task.decompose, ctx)?;
+        
+        let result = world.run_system_with(compound_task.decompose, input)?;
         world.flush();
 
         match result {
-            DecomposeResult::Success { plan, .. } => {
-                if previous_mtr == plan.mtr
-                    && world.entity(root).get::<Plan>().is_some_and(|prev_plan| {
-                        prev_plan.steps == plan.steps
-                    })
-                {
-                    // We found the same plan we are already running. Just keep that one.
-                    return Ok(());
-                }
-                plan
-            }
-            DecomposeResult::Failure => Plan::default(),
+            DecomposeResult::Success => {}
+            DecomposeResult::Failure => {
+                ctx.plan.clear();
+            },
             DecomposeResult::Rejection => return Ok(()),
         }
     } else {
@@ -159,9 +131,15 @@ pub fn update_plan_inner(
         )
     };
 
-    if !plan.is_empty() && world.get::<Effects>(root).is_some()
+    d.apply_effects(world, entity, &mut ctx);
+
+    if ctx.previous_mtr == ctx.plan.mtr
+        && world.entity(root).get::<Plan>().is_some_and(|prev_plan| {
+            prev_plan.steps == ctx.plan.steps
+        })
     {
-        plan.steps.push(PlanStep::ApplyEffects(root));
+        // We found the same plan we are already running. Just keep that one.
+        return Ok(());
     }
 
     let old_plan = world
@@ -169,7 +147,7 @@ pub fn update_plan_inner(
         .get::<Plan>()
         .cloned()
         .unwrap_or_default();
-    world.entity_mut(executor).insert(plan);
+    world.entity_mut(executor).insert(ctx.plan);
     world.trigger(ReplacePlan {
         entity: executor,
         old: old_plan,

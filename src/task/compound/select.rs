@@ -1,7 +1,9 @@
 //! Contains the [`Select`] [`CompoundTask`]
 
+use std::ops::DerefMut;
+
 use crate::{
-    plan::PlanStep, prelude::*, task::compound::{DecomposeId, DecomposeInput, DecomposeResult, TypeErasedCompoundTask},
+    plan::PlanStep, prelude::*, task::compound::{Decompose, DecomposeId, DecomposeInput, DecomposeResult, TaskTuple},
 };
 
 /// A [`CompoundTask`] that decomposes into the first valid subtask.
@@ -16,95 +18,72 @@ impl CompoundTask for Select {
 }
 
 fn decompose_select(
-    In(mut ctx): In<DecomposeInput>,
+    In(input): In<DecomposeInput>,
     world: &mut World,
-    mut q_task_lists: Local<QueryState<&Tasks>>,
-    mut q_tasks: Local<
-        QueryState<
-            (
-                Entity,
-                Has<Operator>,
-                Option<&TypeErasedCompoundTask>,
-            ),
-            Or<(With<Operator>, With<TypeErasedCompoundTask>)>,
-        >,
-    >,
-    mut q_condition_lists: Local<QueryState<&Conditions>>,
-    mut q_conditions: Local<QueryState<(Entity, &Condition)>>,
-    mut q_effect_lists: Local<QueryState<&Effects>>,
-    mut q_effects: Local<QueryState<(Entity, &Effect)>>,
-    mut tasks_buffer: Local<
-        Vec<(Entity, bool, Option<TypeErasedCompoundTask>)>,
-    >,
+    mut d: Local<Decompose>,
+    mut tasks_buffer: Local<Vec<TaskTuple>>,
 ) -> DecomposeResult {
-    let Ok(tasks) = q_task_lists.get(world, ctx.compound_task) else {
+    let d = d.deref_mut();
+
+    let Ok(tasks) = d.q_task_lists.get(world, input.compound_task) else {
         return DecomposeResult::Failure;
     };
-    tasks_buffer.extend(q_tasks.iter_many(world, tasks).map(
+    tasks_buffer.extend(d.q_tasks.iter_many(world, tasks).map(
         |(task_entity, has_operator, compound_task)| {
             (task_entity, has_operator, compound_task.cloned())
         },
     ));
+
+    let backup_ctx = input.ctx_mut().clone();
 
     'task: for (
         i,
         (task_entity, has_operator, compound_task),
     ) in tasks_buffer.drain(..).enumerate()
     {
-        let mtr = ctx.plan.mtr.clone().with(i as u16);
-        if mtr > ctx.previous_mtr {
+        let (mtr, previous_mtr) = {
+            let ctx = input.ctx_mut();
+            let mtr = ctx.plan.mtr.clone().with(i as u16);
+            let previous_mtr = ctx.previous_mtr.clone();
+            (mtr, previous_mtr)
+        };
+        
+        if mtr > previous_mtr {
             return DecomposeResult::Rejection;
         }
-        if let Ok(condition_relations) = q_condition_lists.get(world, task_entity) {
-            for (_, condition) in q_conditions.iter_many(world, condition_relations.iter()) {
-                if !condition.is_fullfilled(&mut ctx.world_state) {
-                    continue 'task;
-                }
-            }
-
-            ctx.plan.steps.push(PlanStep::ValidateConditions(task_entity));
+        
+        if let Some(valid) = d.validate_conditions(world, task_entity, input.ctx_mut())
+            && !valid
+        {
+            continue 'task;
         }
+        
         if has_operator {
-            ctx.plan.steps.push(PlanStep::RunOperator(task_entity));
+            input.ctx_mut().plan.steps.push(PlanStep::RunOperator(task_entity));
         } else if let Some(compound_task) = compound_task {
             let result = world.run_system_with(
                 compound_task.decompose,
-                DecomposeInput {
-                    planner: ctx.planner,
-                    compound_task: task_entity,
-                    world_state: ctx.world_state.clone(),
-                    plan: ctx.plan.clone(),
-                    previous_mtr: ctx.previous_mtr.clone(),
-                },
+                input.with_task(task_entity),
             );
             world.flush();
             match result {
-                Ok(DecomposeResult::Success { plan, world_state }) => {
-                    ctx.plan = plan;
-                    ctx.world_state = world_state;
-                }
+                Ok(DecomposeResult::Success) => {}
                 Ok(DecomposeResult::Rejection) => return DecomposeResult::Rejection,
-                Ok(DecomposeResult::Failure) | Err(_) => continue,
+                Ok(DecomposeResult::Failure) | Err(_) => {
+                    input.ctx_mut().set_from(&backup_ctx);
+                    continue;
+                }
             }
         } else {
             unreachable!()
         }
-        if ctx.plan.is_empty() {
+        if input.ctx_mut().plan.is_empty() {
             return DecomposeResult::Failure;
         }
-        if let Ok(effect_relations) = q_effect_lists.get(world, task_entity) {
-            for (_, effect) in q_effects.iter_many(world, effect_relations.iter()) {
-                effect.apply(&mut ctx.world_state);
-            }
-
-            ctx.plan.steps.push(PlanStep::ApplyEffects(task_entity));
-        }
+        d.apply_effects(world, task_entity, input.ctx_mut());
         // only use the first match
-        ctx.plan.mtr.push(i as u16);
-        return DecomposeResult::Success {
-            plan: ctx.plan,
-            world_state: ctx.world_state,
-        };
+        input.ctx_mut().plan.mtr.push(i as u16);
+        return DecomposeResult::Success;
     }
     DecomposeResult::Failure
 }

@@ -50,7 +50,19 @@ impl Plan {
 
     /// Replaces the current plan with a new empty plan. Doing so will immediately trigger a replan at the next fixed frame.
     pub fn clear(&mut self) {
-        *self = Self::new();
+        self.steps.clear();
+        self.index = 0;
+        self.status = None;
+        self.mtr.clear();
+    }
+
+    /// Sets the attributes of this plan based on another.
+    pub fn set_from(&mut self, other: &Plan) {
+        self.clear();
+        self.steps.extend(other.steps.iter().cloned());
+        self.index = other.index;
+        self.status = other.status;
+        self.mtr.extend(other.mtr.iter().cloned());
     }
 
     /// Gets the current step.
@@ -79,6 +91,11 @@ impl Plan {
                 PlanStep::ApplyEffects(entity) => Some(*entity),
                 _ => None
             })
+    }
+
+    /// Return the steps left.
+    pub fn steps_left(&self) -> impl Iterator<Item=&PlanStep> {
+        self.steps.iter().skip(self.index)
     }
 
     /// Return the operators left.
@@ -154,34 +171,29 @@ pub(crate) fn log_plan(
     log.push_str(&format!("plan {plan_name}:\n"));
     log.push_str(&format!("- mtr: {}\n", plan.mtr));
     log.push_str(&format!(
-        "- operators left ({}):\n",
-        plan.operators_left().count()
+        "- total steps ({})\n",
+        plan.steps.len()
     ));
-    // for operator in &plan.operators_left {
-    //     let operator_name = name(operator.entity)?;
-    //     log.push_str(&format!("  - {operator_name}:\n"));
-    //     log.push_str(&format!("    - effects ({}):\n", operator.effects.len()));
-    //     for effect in &operator.effects {
-    //         let effect_name = name(*effect)?;
-    //         log.push_str(&format!("      - {effect_name}\n"));
-    //     }
-    //     log.push_str(&format!(
-    //         "    - conditions ({}):\n",
-    //         operator.conditions.len()
-    //     ));
-    //     for condition in &operator.conditions {
-    //         let condition_name = name(*condition)?;
-    //         log.push_str(&format!("      - {condition_name}\n"));
-    //     }
-    // }
     log.push_str(&format!(
-        "- total operators ({})\n",
-        plan.operators_total().count()
+        "- steps left ({}):\n",
+        plan.steps_left().count()
     ));
-    // for operator in &plan.operators_total {
-    //     let operator_name = name(*operator)?;
-    //     log.push_str(&format!("  - {operator_name}\n"));
-    // }
+    for step in plan.steps_left() {
+        match step {
+            PlanStep::ValidateConditions(entity) => {
+                let name = name(*entity)?;
+                log.push_str(&format!("  - conditions: {name}\n"));
+            },
+            PlanStep::RunOperator(entity) => {
+                let name = name(*entity)?;
+                log.push_str(&format!("  - operator: {name}\n"));
+            },
+            PlanStep::ApplyEffects(entity) => {
+                let name = name(*entity)?;
+                log.push_str(&format!("  - effects: {name}\n"));
+            },
+        }
+    }
     info!("{}", log.trim());
     Ok(())
 }
