@@ -1,5 +1,31 @@
+use crate::{plan::{CheckStep, PlanReactivity, PlanStep}, prelude::*};
 
-use crate::{plan::PlanStep, prelude::*};
+
+pub(crate) fn check_plan_on_prop_change(
+    entities: Query<(Entity, &Plan,&Props, &PlanReactivity), Changed<Props>>,
+    mut cmds: Commands,
+) {
+    for (entity, plan, props, react) in entities {
+        // if plan is empty, 'update_empty_plans' will take care of it
+        if plan.is_empty() {
+            continue
+        }
+
+        for step in &react.check_steps {
+            match step {
+                CheckStep::Condition { condition, expected } => {
+                    let new_result = condition.is_fullfilled(props);
+                    if new_result != *expected {
+                        cmds.entity(entity).trigger(UpdatePlan::new);
+                        debug!("Entity {} triggered replanning due to prop change: {:?}", entity, condition);
+                        break
+                    }
+                },
+                CheckStep::Effects { entity: _ } => {},
+            }
+        }
+    }
+}
 
 pub(crate) fn update_empty_plans(
     mut plans: Query<(Entity, NameOrEntity, &Plan)>,

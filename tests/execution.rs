@@ -1,7 +1,7 @@
 //! Tests the plan execution
 
 use bevy::{log::LogPlugin, prelude::*, time::TimeUpdateStrategy};
-use bevy_bae::{plan::PlanDomain, prelude::*};
+use bevy_bae::{plan::{PlanDomain, PlanReactivity}, prelude::*};
 use bevy_ecs::entity_disabling::Disabled;
 use std::sync::Mutex;
 
@@ -362,6 +362,47 @@ fn compound_effects_are_not_applied_on_abort() {
 }
 
 #[test]
+fn select_with_reactivity() {
+    let mut app = App::test((
+        PlanReactivity::default(),
+        Select,
+        tasks! [
+            (
+                cond_is("flag", true),
+                Sequence,
+                tasks! [
+                    op("a 1"),
+                    op("a 2"),
+                ]
+            ),
+            (
+                Sequence,
+                tasks! [
+                    op("b 1"),
+                    op("b 2"),
+                    op("b 3"),
+                ]
+            ),
+        ]
+    ));
+
+    app.update();
+    app.assert_last_opt("b 1");
+
+    let mut props = app.get_props_mut("root");
+    props.set("unused_flag", true);
+    
+    app.update();
+    app.assert_last_opt("b 2");
+    
+    let mut props = app.get_props_mut("root");
+    props.set("flag", true);
+
+    app.update();
+    app.assert_last_opt("a 1");
+}
+
+#[test]
 fn logs_plan() {
     let mut app = App::test((
         Select,
@@ -387,6 +428,7 @@ trait TestApp {
     #[track_caller]
     fn assert_last_opt(&self, name: impl Into<Option<&'static str>>);
     fn behavior_entity(&mut self) -> EntityWorldMut<'_>;
+    fn get_props_mut<'a>(&'a mut self, name: &'static str) -> Mut<'a, Props>;
 }
 
 impl TestApp for App {
@@ -440,6 +482,14 @@ impl TestApp for App {
             .single(self.world())
             .unwrap();
         self.world_mut().entity_mut(entity)
+    }
+
+    fn get_props_mut<'a>(&'a mut self, name: &'static str) -> Mut<'a, Props> {
+        let mut q = self.world_mut().query::<(Entity, &mut Props, &Name)>();
+        let (_, props, _) = q.iter_mut(self.world_mut())
+            .find(|(_, _, entity_name)| entity_name.as_str() == name)
+            .unwrap();
+        props
     }
 }
 // The following functions are not reflective of real user code and are here to make the test suite more simple to set up.

@@ -3,7 +3,7 @@
 use bevy_ecs::system::SystemId;
 
 use crate::{
-    plan::{Plan, PlanStep, mtr::Mtr}, prelude::*,
+    plan::{CheckStep, Plan, PlanStep, mtr::Mtr}, prelude::*,
 };
 
 pub mod relationship;
@@ -29,6 +29,8 @@ pub struct DecomposeContext {
     pub plan: Plan,
     /// The [`Mtr`] of the previous plan.
     pub previous_mtr: Mtr,
+    /// The conditions checked during the planning.
+    pub checked_steps: Vec<CheckStep>,
 }
 impl Default for DecomposeContext {
     fn default() -> Self {
@@ -36,6 +38,7 @@ impl Default for DecomposeContext {
             world_state: Props::default(),
             plan: Plan::default(),
             previous_mtr: Mtr::none(),
+            checked_steps: Vec::with_capacity(16),
         }
     }
 }
@@ -160,6 +163,9 @@ impl Decompose {
 
         for condition in self.q_conditions.iter_many(world, conditions.iter()) {
             let result = condition.is_fullfilled(&ctx.world_state);
+            ctx.checked_steps.push(
+                CheckStep::Condition { condition: condition.clone(), expected: result }
+            );
             if !result {
                 all_fulfilled = false;
                 break;
@@ -191,6 +197,7 @@ impl Decompose {
         }
 
         ctx.plan.steps.push(PlanStep::ApplyEffects(entity));
+        ctx.checked_steps.push(CheckStep::Effects { entity });
 
         Some(())
     }

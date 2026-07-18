@@ -137,6 +137,32 @@ impl PlanStep {
 }
 
 
+
+/// Describe a step to be performed while checking if a plan is still valid.
+#[derive(Debug, Clone)]
+pub enum CheckStep {
+    /// Checks if the condition still produces the same result.
+    Condition {
+        /// The condition to be checked.
+        condition: Condition,
+        /// The expected value.
+        expected: bool,
+    },
+    /// Applies the effects specified by the entity.
+    Effects {
+        /// The entity.
+        entity: Entity,
+    }
+}
+
+/// Enables automatic replanning when properties that invalidate
+/// the current plan are modified.
+#[derive(Component, Debug, Default)]
+pub struct PlanReactivity {
+    /// The steps that must be performed during validation.
+    check_steps: Vec<CheckStep>,
+}
+
 /// An [`EntityEvent`] for logging a given plan via [`info!`]
 #[derive(EntityEvent, Debug)]
 pub struct LogPlan {

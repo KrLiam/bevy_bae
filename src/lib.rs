@@ -42,7 +42,7 @@ pub use estr::Estr;
 
 use crate::{
     plan::{
-        execution::{execute_plan, update_empty_plans},
+        execution::{check_plan_on_prop_change, execute_plan, update_empty_plans},
         log_plan,
         update::update_plan,
     },
@@ -95,7 +95,7 @@ impl Plugin for BaePlugin {
         app.add_observer(update_plan).add_observer(log_plan);
         app.add_systems(
             self.schedule,
-            ((update_empty_plans, execute_plan)
+            ((check_plan_on_prop_change, update_empty_plans, execute_plan)
                 .chain()
                 .in_set(BaeSystems::ExecutePlan),),
         );

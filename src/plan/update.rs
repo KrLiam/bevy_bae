@@ -4,7 +4,7 @@ use bevy_ecs::error::{DefaultErrorHandler, HandleError as _};
 use bevy_ecs::system::command::run_system_cached_with;
 use core::marker::PhantomData;
 
-use crate::plan::{PlanDomain, PlanStep};
+use crate::plan::{PlanDomain, PlanReactivity, PlanStep};
 use crate::plan::mtr::Mtr;
 use crate::prelude::*;
 use crate::task::compound::{Decompose, DecomposeContext, DecomposeInput, DecomposeResult, TypeErasedCompoundTask};
@@ -65,6 +65,7 @@ pub fn update_plan_inner(
     update: In<UpdatePlan>,
     world: &mut World,
     mut plans: Local<QueryState<&PlanDomain>>,
+    mut reacts: Local<QueryState<&mut PlanReactivity>>,
     mut tasks: Local<
         QueryState<
             (Entity, Has<Operator>, Option<&TypeErasedCompoundTask>),
@@ -140,6 +141,12 @@ pub fn update_plan_inner(
     {
         // We found the same plan we are already running. Just keep that one.
         return Ok(());
+    }
+
+    if let Ok(mut react) = reacts.get_mut(world, root) {
+        react.check_steps.clear();
+        react.check_steps.extend(ctx.checked_steps);
+        debug!("reactive plan set checked steps: {:?}",react.check_steps);
     }
 
     let old_plan = world
