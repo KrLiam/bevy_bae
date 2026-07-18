@@ -159,11 +159,13 @@ fn assert_effects(behavior: impl Bundle, props: Vec<Vec<(&'static str, Value)>>)
         .clone();
 
     let actual_props = actual_plan
-        .operators_left
+        .operators_left()
         .into_iter()
-        .map(|planned_op| {
-            planned_op
-                .effects
+        .map(|op_entity| {
+            let effects = app.world().get::<Effects>(op_entity)
+                .map(|eff| eff.iter().collect::<Vec<_>>())
+                .unwrap_or_default();
+            effects
                 .into_iter()
                 .map(|effect| {
                     let effect = app.world().entity(effect).get::<Effect>().unwrap();

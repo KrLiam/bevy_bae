@@ -1,6 +1,5 @@
 //! Contains the [`Plan`] component and types for operating on it.
 
-use alloc::collections::VecDeque;
 use bevy_ecs::{entity_disabling::Disabled, lifecycle::HookContext, query::QueryEntityError, world::DeferredWorld};
 
 use crate::{plan::mtr::Mtr, prelude::*};
@@ -29,16 +28,16 @@ impl PlanDomain {
 
 /// A full plan of operators to execute. If this is empty, either through manually clearing it, inserting it, when it runs out of operators, or fails to execute them,
 /// the plan will be recomputed in the next fixed frame.
-#[derive(Component, Clone, Default, PartialEq, Eq, Reflect, Debug, Deref, DerefMut)]
+#[derive(Component, Clone, Default, PartialEq, Eq, Reflect, Debug)]
 #[reflect(Component)]
 #[require(Props, PlanDomain)]
 pub struct Plan {
-    /// The queue of planned [`Operator`]s to execute. This will get [`VecDeque::pop_front`]ed during plan execution.
-    #[reflect(ignore)]
-    #[deref]
-    pub operators_left: VecDeque<PlannedOperator>,
-    /// All [`Operator`]s that were in [`Plan::operators_left`] when the plan was created.
-    pub operators_total: Vec<Entity>,
+    /// The planned steps.
+    pub steps: Vec<PlanStep>,
+    /// The index of the current step.
+    pub index: usize,
+    /// The [`OperatorStatus`] returned by the current operator.
+    pub status: Option<OperatorStatus>,
     /// The [`Mtr`] of the full plan when it was created.
     pub mtr: Mtr,
 }
@@ -53,20 +52,73 @@ impl Plan {
     pub fn clear(&mut self) {
         *self = Self::new();
     }
+
+    /// Gets the current step.
+    pub fn current_step(&self) -> Option<PlanStep> {
+        self.steps.get(self.index).cloned()
+    }
+
+    /// Returns whether this plan is over.
+    pub fn is_empty(&self) -> bool {
+        self.index >= self.steps.len()
+    }
+
+    /// Return all operator entities.
+    pub fn operators_total(&self) -> impl Iterator<Item=Entity> {
+        self.steps.iter()
+            .filter_map(|step| match step {
+                PlanStep::RunOperator(entity) => Some(*entity),
+                _ => None
+            })
+    }
+
+    /// Return all effects.
+    pub fn effects_total(&self) -> impl Iterator<Item=Entity> {
+        self.steps.iter()
+            .filter_map(|step| match step {
+                PlanStep::ApplyEffects(entity) => Some(*entity),
+                _ => None
+            })
+    }
+
+    /// Return the operators left.
+    pub fn operators_left(&self) -> impl Iterator<Item=Entity> {
+        self.operators_total().skip(self.index)
+    }
+
+    /// Return the effects to be applied left.
+    pub fn effects_left(&self) -> impl Iterator<Item=Entity> {
+        self.effects_total().skip(self.index)
+    }
+
+    /// Advances plan execution to the next step.
+    pub fn advance(&mut self) {
+        self.index = usize::min(self.index + 1, self.steps.len());
+    }
 }
 
-/// An entry in [`Plan::operators_left`], representing an operator that is either currently executing or waiting to execute.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PlannedOperator {
-    /// The [`Entity`] of the [`Operator`].
-    pub entity: Entity,
-    /// The [`Effect`]s of the operator to be applied after it completes. Does not include effects that are [`Effect::plan_only`].
-    /// The last operator of a compound task will also inherit effects from higher-up compound tasks.
-    pub effects: Vec<Entity>,
-    /// The [`Condition`]s that need to be fulfilled for the operator to be run.
-    /// The first operator of a compound task will also inherit conditions from higher-up compound tasks.
-    pub conditions: Vec<Entity>,
+/// A step in the plan execution.
+#[derive(Debug, Clone, PartialEq, Eq, Reflect)]
+pub enum PlanStep {
+    /// Checks if all conditions specified by [`Entity`]
+    /// are fullfilled. The entity must have [`Conditions`].
+    ValidateConditions(Entity),
+    /// Runs the operator system of [`Entity`] with the [`Operator`] component.
+    RunOperator(Entity),
+    /// Applies the effects of [`Entity`] with the [`Effects`] component;
+    ApplyEffects(Entity),
 }
+impl PlanStep {
+    /// Returns the entity referenced by this step.
+    pub fn entity(&self) -> Entity {
+        match self {
+            PlanStep::ValidateConditions(entity) => *entity,
+            PlanStep::RunOperator(entity) => *entity,
+            PlanStep::ApplyEffects(entity) => *entity,
+        }
+    }
+}
+
 
 /// An [`EntityEvent`] for logging a given plan via [`info!`]
 #[derive(EntityEvent, Debug)]
@@ -103,33 +155,33 @@ pub(crate) fn log_plan(
     log.push_str(&format!("- mtr: {}\n", plan.mtr));
     log.push_str(&format!(
         "- operators left ({}):\n",
-        plan.operators_left.len()
+        plan.operators_left().count()
     ));
-    for operator in &plan.operators_left {
-        let operator_name = name(operator.entity)?;
-        log.push_str(&format!("  - {operator_name}:\n"));
-        log.push_str(&format!("    - effects ({}):\n", operator.effects.len()));
-        for effect in &operator.effects {
-            let effect_name = name(*effect)?;
-            log.push_str(&format!("      - {effect_name}\n"));
-        }
-        log.push_str(&format!(
-            "    - conditions ({}):\n",
-            operator.conditions.len()
-        ));
-        for condition in &operator.conditions {
-            let condition_name = name(*condition)?;
-            log.push_str(&format!("      - {condition_name}\n"));
-        }
-    }
+    // for operator in &plan.operators_left {
+    //     let operator_name = name(operator.entity)?;
+    //     log.push_str(&format!("  - {operator_name}:\n"));
+    //     log.push_str(&format!("    - effects ({}):\n", operator.effects.len()));
+    //     for effect in &operator.effects {
+    //         let effect_name = name(*effect)?;
+    //         log.push_str(&format!("      - {effect_name}\n"));
+    //     }
+    //     log.push_str(&format!(
+    //         "    - conditions ({}):\n",
+    //         operator.conditions.len()
+    //     ));
+    //     for condition in &operator.conditions {
+    //         let condition_name = name(*condition)?;
+    //         log.push_str(&format!("      - {condition_name}\n"));
+    //     }
+    // }
     log.push_str(&format!(
         "- total operators ({})\n",
-        plan.operators_total.len()
+        plan.operators_total().count()
     ));
-    for operator in &plan.operators_total {
-        let operator_name = name(*operator)?;
-        log.push_str(&format!("  - {operator_name}\n"));
-    }
+    // for operator in &plan.operators_total {
+    //     let operator_name = name(*operator)?;
+    //     log.push_str(&format!("  - {operator_name}\n"));
+    // }
     info!("{}", log.trim());
     Ok(())
 }

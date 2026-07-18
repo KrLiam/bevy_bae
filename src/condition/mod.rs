@@ -14,7 +14,7 @@ pub mod relationship;
 #[reflect(Component)]
 pub struct Condition {
     #[reflect(ignore, default = "Condition::true_pred")]
-    predicate: Arc<dyn Fn(&mut Props) -> bool + Send + Sync + 'static>,
+    predicate: Arc<dyn Fn(&Props) -> bool + Send + Sync + 'static>,
 }
 
 impl PartialEq for Condition {
@@ -26,7 +26,7 @@ impl Eq for Condition {}
 
 impl Condition {
     /// Creates a new condition with the given predicate.
-    pub fn new(predicate: impl Fn(&mut Props) -> bool + Send + Sync + 'static) -> Self {
+    pub fn new(predicate: impl Fn(&Props) -> bool + Send + Sync + 'static) -> Self {
         Self {
             predicate: Arc::new(predicate),
         }
@@ -34,7 +34,7 @@ impl Condition {
 
     /// Evaluates the condition with the given properties, returning whether it is fulfilled.
     /// It will insert props holding default values if they are queried, but are not yet present in [`Props`].
-    pub fn is_fullfilled(&self, props: &mut Props) -> bool {
+    pub fn is_fullfilled(&self, props: &Props) -> bool {
         (self.predicate)(props)
     }
 
@@ -74,7 +74,7 @@ impl Condition {
         range: impl RangeBounds<f32> + Send + Sync + 'static,
     ) -> Self {
         let name = name.into();
-        Self::new(move |props| range.contains(props.get_mut::<f32>(name)))
+        Self::new(move |props| range.contains(&props.get::<f32>(name)))
     }
 
     /// Shorthand for creating a condition that always evaluates to true
@@ -95,10 +95,10 @@ impl Condition {
     ) -> Self {
         let name = name.into();
         let value = value.into();
-        Self::new(move |p: &mut Props| predicate(*p.entry(name).or_default(), value))
+        Self::new(move |p: &Props| predicate(p.get_value(name).unwrap_or_default(), value))
     }
 
-    fn true_pred() -> Arc<dyn Fn(&mut Props) -> bool + Send + Sync + 'static> {
+    fn true_pred() -> Arc<dyn Fn(&Props) -> bool + Send + Sync + 'static> {
         Arc::new(|_| true)
     }
 }

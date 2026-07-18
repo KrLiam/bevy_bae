@@ -4,7 +4,7 @@ use bevy_ecs::error::{DefaultErrorHandler, HandleError as _};
 use bevy_ecs::system::command::run_system_cached_with;
 use core::marker::PhantomData;
 
-use crate::plan::{PlanDomain, PlannedOperator};
+use crate::plan::{PlanDomain, PlanStep};
 use crate::plan::mtr::Mtr;
 use crate::prelude::*;
 use crate::task::compound::{DecomposeInput, DecomposeResult, TypeErasedCompoundTask};
@@ -66,7 +66,6 @@ pub fn update_plan_inner(
     world: &mut World,
     mut plans: Local<QueryState<&PlanDomain>>,
     mut conditions: Local<QueryState<(Entity, &Condition)>>,
-    mut effects: Local<QueryState<Entity, With<Effect>>>,
     mut tasks: Local<
         QueryState<
             (Entity, Has<Operator>, Option<&TypeErasedCompoundTask>),
@@ -84,7 +83,10 @@ pub fn update_plan_inner(
 
     let mut world_state = world.entity(update.entity).props().clone();
     let mut initial_conditions = Vec::new();
+    let mut conditions_entity = None;
     if let Some(condition_relations) = world.get::<Conditions>(root) {
+        conditions_entity = Some(root);
+
         for (entity, condition) in conditions.iter_many(world, condition_relations) {
             let is_fulfilled = condition.is_fullfilled(&mut world_state);
             if !is_fulfilled {
@@ -107,15 +109,18 @@ pub fn update_plan_inner(
     };
     let mut plan = if has_operator {
         // well that was easy: this root has just a single operator
+        let mut steps = vec![];
+
+        if let Some(entity) = conditions_entity {
+            steps.push(PlanStep::ValidateConditions(entity));
+        }
+        steps.push(PlanStep::RunOperator(entity));
+
         Plan {
-            operators_left: [PlannedOperator {
-                entity,
-                effects: vec![],
-                conditions: initial_conditions,
-            }]
-            .into(),
+            steps,
+            index: 0,
             mtr: Mtr::default(),
-            operators_total: Vec::new(),
+            status: None,
         }
     } else if let Some(compound_task) = compound_task {
         let previous_mtr = if let Some(plan) = world.entity(root).get::<Plan>() {
@@ -129,7 +134,6 @@ pub fn update_plan_inner(
             planner: root,
             compound_task: root,
             previous_mtr: previous_mtr.clone(),
-            conditions: initial_conditions,
         };
         let result = world.run_system_with(compound_task.decompose, ctx)?;
         world.flush();
@@ -138,12 +142,7 @@ pub fn update_plan_inner(
             DecomposeResult::Success { plan, .. } => {
                 if previous_mtr == plan.mtr
                     && world.entity(root).get::<Plan>().is_some_and(|prev_plan| {
-                        prev_plan.operators_total.len() == plan.operators_left.len()
-                            && prev_plan
-                                .operators_total
-                                .iter()
-                                .zip(plan.operators_left.iter())
-                                .all(|(a, b)| *a == b.entity)
+                        prev_plan.steps == plan.steps
                     })
                 {
                     // We found the same plan we are already running. Just keep that one.
@@ -160,20 +159,10 @@ pub fn update_plan_inner(
         )
     };
 
-    if !plan.is_empty()
-        && let Some(effect_relations) = world.get::<Effects>(root)
+    if !plan.is_empty() && world.get::<Effects>(root).is_some()
     {
-        for effect in effects.iter_many(world, effect_relations) {
-            plan.back_mut().unwrap().effects.push(effect);
-        }
+        plan.steps.push(PlanStep::ApplyEffects(root));
     }
-
-    let op_entities = plan
-        .operators_left
-        .iter()
-        .map(|op| op.entity)
-        .collect::<Vec<_>>();
-    plan.operators_total = op_entities;
 
     let old_plan = world
         .entity(executor)

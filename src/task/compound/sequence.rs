@@ -1,9 +1,7 @@
 //! Contains the [`Sequence`] [`CompoundTask`]
 
 use crate::{
-    plan::PlannedOperator,
-    prelude::*,
-    task::compound::{DecomposeId, DecomposeInput, DecomposeResult, TypeErasedCompoundTask},
+    plan::PlanStep, prelude::*, task::compound::{DecomposeId, DecomposeInput, DecomposeResult, TypeErasedCompoundTask},
 };
 
 /// A [`CompoundTask`] that decomposes into all subtasks, given that they are all valid.
@@ -33,8 +31,8 @@ fn decompose_sequence(
             Or<(With<Operator>, With<TypeErasedCompoundTask>)>,
         >,
     >,
-    mut conditions: Local<QueryState<(Entity, &Condition)>>,
-    mut effects: Local<QueryState<(Entity, &Effect)>>,
+    mut conditions: Local<QueryState<&Condition>>,
+    mut effects: Local<QueryState<&Effect>>,
     mut individual_tasks_scratch: Local<
         Vec<(
             Entity,
@@ -63,28 +61,17 @@ fn decompose_sequence(
     for (task_entity, has_operator, compound_task, condition_relations, effect_relations) in
         individual_tasks_scratch.drain(..)
     {
-        let mut individual_conditions = Vec::new();
         if let Some(condition_relations) = condition_relations {
-            for (entity, condition) in conditions.iter_many(world, condition_relations.iter()) {
+            for condition in conditions.iter_many(world, condition_relations.iter()) {
                 if !condition.is_fullfilled(&mut ctx.world_state) {
                     return DecomposeResult::Failure;
                 }
-                individual_conditions.push(entity);
             }
+
+            ctx.plan.steps.push(PlanStep::ValidateConditions(task_entity));
         }
-        let conditions = if !found_anything {
-            // Only the first "entry" subtask needs to inherit our conditions
-            ctx.conditions.extend(individual_conditions);
-            ctx.conditions.clone()
-        } else {
-            individual_conditions
-        };
         if has_operator {
-            ctx.plan.push_back(PlannedOperator {
-                entity: task_entity,
-                effects: vec![],
-                conditions,
-            });
+            ctx.plan.steps.push(PlanStep::RunOperator(task_entity));
         } else if let Some(compound_task) = compound_task {
             let result = world.run_system_with(
                 compound_task.decompose,
@@ -94,7 +81,6 @@ fn decompose_sequence(
                     world_state: ctx.world_state.clone(),
                     plan: ctx.plan.clone(),
                     previous_mtr: ctx.previous_mtr.clone(),
-                    conditions,
                 },
             );
             world.flush();
@@ -113,10 +99,10 @@ fn decompose_sequence(
             return DecomposeResult::Failure;
         }
         if let Some(effect_relations) = effect_relations {
-            for (entity, effect) in effects.iter_many(world, effect_relations.iter()) {
+            for effect in effects.iter_many(world, effect_relations.iter()) {
                 effect.apply(&mut ctx.world_state);
-                ctx.plan.back_mut().unwrap().effects.push(entity);
             }
+            ctx.plan.steps.push(PlanStep::ApplyEffects(task_entity));
         }
         found_anything = true;
     }

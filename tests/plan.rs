@@ -1,7 +1,7 @@
 //! Tests the plan generation
 
 use bevy::{log::LogPlugin, prelude::*, time::TimeUpdateStrategy};
-use bevy_bae::{plan::{Plan, PlanDomain}, prelude::*};
+use bevy_bae::{plan::{Plan, PlanStep, PlanDomain}, prelude::*};
 use std::sync::Mutex;
 
 #[test]
@@ -211,8 +211,27 @@ fn effect_not_disabled_by_invalid_branch() {
     );
 }
 
+#[test]
+fn plan_steps() {
+    let app = run_app((
+        Sequence,
+        tasks! [
+            op("a"),
+            (
+                Select,
+                tasks! [
+                    (cond_is("x", true), op("b 1")),
+                    (op("b 2"), eff("x", true)),
+                ]
+            ),
+            (cond_is("x", true), op("c")),
+        ]
+    ));
+    println!("{:?}", get_plan(&app));
+}
+
 #[track_caller]
-fn assert_plan(behavior: impl Bundle, plan: Vec<&'static str>) {
+fn run_app(behavior: impl Bundle) -> App {
     let mut app = App::new();
     let behavior = Mutex::new(Some(behavior));
     app.add_plugins((
@@ -238,25 +257,39 @@ fn assert_plan(behavior: impl Bundle, plan: Vec<&'static str>) {
     });
     app.finish();
     app.update();
-    let actual_plan = app
+    app
+}
+
+#[track_caller]
+fn get_plan(app: &App) -> Plan {
+    app
         .world()
         .try_query::<&Plan>()
         .unwrap()
         .single(app.world())
         .unwrap()
-        .clone();
+        .clone()
+}
 
+#[track_caller]
+fn assert_plan(behavior: impl Bundle, plan: Vec<&'static str>) {
+    let app = run_app(behavior);
+    let actual_plan = get_plan(&app);
     let mut operators = app
         .world()
         .try_query_filtered::<(Entity, &Name), With<Operator>>()
         .unwrap();
     let actual_plan_names = actual_plan
-        .operators_left
-        .into_iter()
-        .map(|planned_op| {
+        .steps
+        .iter()
+        .filter_map(|step| match step {
+            PlanStep::RunOperator(e) => Some(*e),
+            _ => None
+        })
+        .map(|entity| {
             operators
                 .iter(app.world())
-                .find_map(|(op, name)| (op == planned_op.entity).then(|| name.to_string()))
+                .find_map(|(op, name)| (op == entity).then(|| name.to_string()))
                 .unwrap()
         })
         .collect::<Vec<_>>();

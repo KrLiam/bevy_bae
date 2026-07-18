@@ -1,9 +1,7 @@
 //! Contains the [`Select`] [`CompoundTask`]
 
 use crate::{
-    plan::PlannedOperator,
-    prelude::*,
-    task::compound::{DecomposeId, DecomposeInput, DecomposeResult, TypeErasedCompoundTask},
+    plan::PlanStep, prelude::*, task::compound::{DecomposeId, DecomposeInput, DecomposeResult, TypeErasedCompoundTask},
 };
 
 /// A [`CompoundTask`] that decomposes into the first valid subtask.
@@ -70,19 +68,16 @@ fn decompose_select(
             return DecomposeResult::Rejection;
         }
         if let Some(condition_relations) = condition_relations {
-            for (entity, condition) in conditions.iter_many(world, condition_relations.iter()) {
+            for (_, condition) in conditions.iter_many(world, condition_relations.iter()) {
                 if !condition.is_fullfilled(&mut ctx.world_state) {
                     continue 'task;
                 }
-                ctx.conditions.push(entity);
             }
+
+            ctx.plan.steps.push(PlanStep::ValidateConditions(task_entity));
         }
         if has_operator {
-            ctx.plan.push_back(PlannedOperator {
-                entity: task_entity,
-                effects: vec![],
-                conditions: ctx.conditions.clone(),
-            });
+            ctx.plan.steps.push(PlanStep::RunOperator(task_entity));
         } else if let Some(compound_task) = compound_task {
             let result = world.run_system_with(
                 compound_task.decompose,
@@ -92,7 +87,6 @@ fn decompose_select(
                     world_state: ctx.world_state.clone(),
                     plan: ctx.plan.clone(),
                     previous_mtr: ctx.previous_mtr.clone(),
-                    conditions: ctx.conditions.clone(),
                 },
             );
             world.flush();
@@ -111,10 +105,11 @@ fn decompose_select(
             return DecomposeResult::Failure;
         }
         if let Some(effect_relations) = effect_relations {
-            for (entity, effect) in effects.iter_many(world, effect_relations.iter()) {
+            for (_, effect) in effects.iter_many(world, effect_relations.iter()) {
                 effect.apply(&mut ctx.world_state);
-                ctx.plan.back_mut().unwrap().effects.push(entity);
             }
+
+            ctx.plan.steps.push(PlanStep::ApplyEffects(task_entity));
         }
         // only use the first match
         ctx.plan.mtr.push(i as u16);

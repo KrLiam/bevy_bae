@@ -37,9 +37,6 @@ pub struct DecomposeInput {
     /// The [`Mtr`] of the previous plan.
     /// Used to determine whether the current decomposition should return [`DecomposeResult::Rejection`] because it has a lower priority than the running task.
     pub previous_mtr: Mtr,
-    /// The running conditions that must be met to event enter this decomposition.
-    /// Make sure to add these to the first operator of the decomposition so they're validated at runtime.
-    pub conditions: Vec<Entity>,
 }
 
 ///
