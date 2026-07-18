@@ -21,8 +21,6 @@ bevy_ptr = { version = "0.18", default-features = false }
 bevy_utils = { version = "0.18", default-features = false }
 tracing = "0.1"
 
-bevy_mod_props = "2"
-
 estr = { version = "1" }
 variadics_please = "1"
 disqualified = "1.0.0"

@@ -15,6 +15,7 @@ pub mod prelude {
             relationship::{EffectOf, EffectSpawner, EffectSpawnerCommands, Effects, effects},
         },
         plan::{LogPlan, Plan, update::UpdatePlan},
+        props::*,
         task::{
             OperatorStatus,
             compound::{
@@ -26,7 +27,6 @@ pub mod prelude {
             operator::{Operator, OperatorInput},
         },
     };
-    pub use bevy_mod_props::prelude::*;
     pub(crate) use {
         crate::name_ext::NameOrEntityExt as _,
         bevy_app::prelude::*,
@@ -57,6 +57,7 @@ pub mod condition;
 pub mod effect;
 mod name_ext;
 pub mod plan;
+pub mod props;
 pub mod task;
 
 /// The plugin required to use `bevy_bae`. The schedule used can be configured with [`Self::new`], and the default is [`FixedUpdate`].
