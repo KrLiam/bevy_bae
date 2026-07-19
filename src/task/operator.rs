@@ -85,7 +85,12 @@ impl Operator {
 
     /// Shorthand for creating an operator that does nothing.
     pub fn noop() -> Self {
-        Self::new(|_: In<OperatorInput>| OperatorStatus::Success)
+        Self::noop_with(OperatorStatus::Success)
+    }
+
+    /// Shorthand for creating an operator that simply returns `status`.
+    pub fn noop_with(status: OperatorStatus) -> Self {
+        Self::new(move |_: In<OperatorInput>| status)
     }
 
     /// Returns the [`SystemId`] of the registered operator one-shot system.
