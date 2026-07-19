@@ -43,8 +43,7 @@ use crate::{
     plan::{
         execution::{check_plan_on_prop_change, execute_plan, run_exit_operators_on_inserted_plan, run_exit_operators_on_removed_plan, update_empty_plans}, log_plan, update::update_plan,
     }, prelude::*, task::{
-        compound::CompoundAppExt,
-        validation::{insert_bae_task_present_on_add, remove_bae_task_present_on_remove},
+        compound::{CompoundAppExt, loop_task::Loop}, validation::{insert_bae_task_present_on_add, remove_bae_task_present_on_remove},
     },
 };
 
@@ -86,7 +85,8 @@ impl Plugin for BaePlugin {
             .add_observer(insert_bae_task_present_on_add::<Tasks>)
             .add_observer(remove_bae_task_present_on_remove::<Tasks>);
         app.add_compound_task::<Select>()
-            .add_compound_task::<Sequence>();
+            .add_compound_task::<Sequence>()
+            .add_compound_task::<Loop>();
         app.add_observer(update_plan).add_observer(log_plan);
         app
             .add_systems(

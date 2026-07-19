@@ -9,6 +9,7 @@ use crate::{
 pub mod relationship;
 pub mod select;
 pub mod sequence;
+pub mod loop_task;
 
 /// Trait implemented for compound tasks. The builtin [`CompoundTask`]s are [`Sequence`] and [`Select`].
 /// If you implement this trait, you must also call [`CompoundAppExt::add_compound_task`] to initialize it.

@@ -1,7 +1,7 @@
 //! Tests the plan execution
 
 use bevy::{log::LogPlugin, prelude::*, time::TimeUpdateStrategy};
-use bevy_bae::{plan::{PlanDomain, PlanReactivity}, prelude::*, task::scope::{EnterOperator, ExitOperator}};
+use bevy_bae::{plan::{PlanDomain, PlanReactivity}, prelude::*, task::{compound::loop_task::Loop, scope::{EnterOperator, ExitOperator}}};
 use bevy_ecs::entity_disabling::Disabled;
 use std::sync::Mutex;
 
@@ -558,6 +558,53 @@ fn select_with_reactivity() {
 
     app.update();
     app.assert_last_opt("a 1");
+}
+
+#[test]
+fn loop_with_enter_exit_operator() {
+    let mut app = App::test((
+        Name::new("a"),
+        Loop,
+        EnterOperator::new(scope_system("enter a")),
+        tasks! [
+            (
+                Name::new("b"),
+                EnterOperator::new(scope_system("enter b")),
+                Operator::new(operator_system("b", 1)),
+            ),
+            op("c"),
+            (
+                Name::new("d"),
+                Operator::new(operator_system("d", 1)),
+                ExitOperator::new(scope_system("exit d")),
+            ),
+        ],
+        ExitOperator::new(scope_system("exit a")),
+    ));
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["enter a", "enter b", "b"]);
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["enter a", "enter b", "b", "c"]);
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["enter a", "enter b", "b", "c", "d", "exit d"]);
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["enter a", "enter b", "b", "c", "d", "exit d", "enter b", "b"]);
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["enter a", "enter b", "b", "c", "d", "exit d", "enter b", "b", "c"]);
+
+    let root = app.get_entity("a");
+    app.world_mut().entity_mut(root).insert(Plan::default());
+
+    app.update();
+    assert_eq!(app.opt_log(), vec![
+        "enter a", "enter b", "b", "c", "d", "exit d", "enter b", "b", "c",
+        "exit a", "enter a", "enter b", "b"
+    ]);
 }
 
 #[test]

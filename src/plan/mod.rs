@@ -154,6 +154,13 @@ pub enum PlanStep {
     RunExitOperator(Entity),
     /// Applies the effects of [`Entity`] with the [`Effects`] component;
     ApplyEffects(Entity),
+    /// Jumps execution to step at `index`.
+    Jump {
+        /// The task that originated this step.
+        entity: Entity,
+        /// The destination index.
+        index: usize,
+    },
 }
 impl PlanStep {
     /// Returns the entity referenced by this step.
@@ -164,6 +171,7 @@ impl PlanStep {
             PlanStep::RunEnterOperator{ entity, .. } => *entity,
             PlanStep::RunExitOperator(entity) => *entity,
             PlanStep::ApplyEffects(entity) => *entity,
+            PlanStep::Jump { entity, .. } => *entity,
         }
     }
 }
@@ -257,6 +265,10 @@ pub(crate) fn log_plan(
             PlanStep::ApplyEffects(entity) => {
                 let name = name(*entity)?;
                 log.push_str(&format!("  - effects: {name}\n"));
+            },
+            PlanStep::Jump { entity, .. } => {
+                let name = name(*entity)?;
+                log.push_str(&format!("  - jump: {name}\n"));
             },
         }
     }

@@ -67,6 +67,7 @@ pub(crate) fn execute_plan(
             else { break 'plan_loop };
     
             let mut status = OperatorStatus::Success;
+            let mut skip_advance = false;
     
             match step {
                 PlanStep::ValidateConditions(entity) => {
@@ -220,6 +221,18 @@ pub(crate) fn execute_plan(
                         }
                     }
                 },
+                PlanStep::Jump { index, .. } => {
+                    debug!(
+                        ?plan_entity,
+                        ?plan_name,
+                        "jumping to index {index}"
+                    );
+
+                    let Ok((_, mut plan, _)) = q_plans.get_mut(world, plan_entity)
+                    else { panic!() };
+                    plan.index = usize::min(index, plan.steps.len().saturating_sub(1));
+                    skip_advance = true;
+                }
             }
     
             match status {
@@ -232,7 +245,9 @@ pub(crate) fn execute_plan(
                         ?plan_name,
                         "step completed successfully, moving to next step"
                     );
-                    plan.advance();
+                    if !skip_advance {
+                        plan.advance();
+                    }
                 }
                 OperatorStatus::Ongoing => {
                     debug!(?plan_entity, ?plan_name, "operator ongoing");
@@ -259,7 +274,9 @@ pub(crate) fn execute_plan(
             
             // check whether the next step should execute now
             ran_operator = ran_operator || matches!(step, PlanStep::RunOperator(_));
-            let can_run_next_step = matches!(next_step, Some(PlanStep::ApplyEffects(_) | PlanStep::RunExitOperator(_)));
+            let can_run_next_step = matches!(next_step, Some(
+                PlanStep::ApplyEffects(_) | PlanStep::RunExitOperator(_) | PlanStep::Jump { .. }
+            ));
             let run_next_step = !ran_operator || can_run_next_step;
             if run_next_step {
                 continue
