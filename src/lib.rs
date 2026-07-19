@@ -17,14 +17,13 @@ pub mod prelude {
         plan::{LogPlan, Plan, update::UpdatePlan},
         props::*,
         task::{
-            OperatorStatus,
             compound::{
                 CompoundTask,
                 relationship::{TaskOf, TaskSpawner, TaskSpawnerCommands, Tasks, tasks},
                 select::Select,
                 sequence::Sequence,
             },
-            operator::{Operator, OperatorInput},
+            operator::{Operator, OperatorInput, OperatorStatus},
         },
     };
     pub(crate) use {
@@ -42,12 +41,8 @@ pub use estr::Estr;
 
 use crate::{
     plan::{
-        execution::{check_plan_on_prop_change, execute_plan, update_empty_plans},
-        log_plan,
-        update::update_plan,
-    },
-    prelude::*,
-    task::{
+        execution::{check_plan_on_prop_change, execute_plan, run_exit_operators_on_inserted_plan, run_exit_operators_on_removed_plan, update_empty_plans}, log_plan, update::update_plan,
+    }, prelude::*, task::{
         compound::CompoundAppExt,
         validation::{insert_bae_task_present_on_add, remove_bae_task_present_on_remove},
     },
@@ -93,12 +88,15 @@ impl Plugin for BaePlugin {
         app.add_compound_task::<Select>()
             .add_compound_task::<Sequence>();
         app.add_observer(update_plan).add_observer(log_plan);
-        app.add_systems(
-            self.schedule,
-            ((check_plan_on_prop_change, update_empty_plans, execute_plan)
-                .chain()
-                .in_set(BaeSystems::ExecutePlan),),
-        );
+        app
+            .add_systems(
+                self.schedule,
+                ((check_plan_on_prop_change, update_empty_plans, execute_plan)
+                    .chain()
+                    .in_set(BaeSystems::ExecutePlan),),
+            )
+            .add_observer(run_exit_operators_on_inserted_plan)
+            .add_observer(run_exit_operators_on_removed_plan);
     }
 }
 

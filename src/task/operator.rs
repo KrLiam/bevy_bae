@@ -8,8 +8,29 @@ use bevy_ecs::{lifecycle::HookContext, world::DeferredWorld};
 use crate::prelude::*;
 use crate::task::validation::BaeTaskPresent;
 
+
+/// Inputs for an operator.
+pub struct OperatorInput {
+    /// The entity up the hierarchy that holds the [`Plan`]. This is usually your entity of interest.
+    pub entity: Entity,
+    /// The entity that represents the operator itself. Useful if you want to associate custom extra data with an operator.
+    pub operator: Entity,
+}
+
+/// The return type of [`Operator`]s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Reflect)]
+pub enum OperatorStatus {
+    /// The task has completed successfully. Proceed to the next step of the plan.
+    Success,
+    /// The task is still running. Stay in the current step of the plan.
+    Ongoing,
+    /// The task has failed. Abort the plan and replan it at the next fixed frame.
+    Failure,
+}
+
 /// The exact type of [`SystemId`] valid for [`Operator`]s.
 pub type OperatorId = SystemId<In<OperatorInput>, OperatorStatus>;
+
 
 /// The smallest unit of a plan, representing a single step. Contains a system that gets called for you during the execution of the plan.
 #[derive(Component, Reflect)]
@@ -94,10 +115,3 @@ impl Operator {
     }
 }
 
-/// Inputs for an operator.
-pub struct OperatorInput {
-    /// The entity up the hierarchy that holds the [`Plan`]. This is usually your entity of interest.
-    pub entity: Entity,
-    /// The entity that represents the operator itself. Useful if you want to associate custom extra data with an operator.
-    pub operator: Entity,
-}

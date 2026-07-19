@@ -30,7 +30,7 @@ impl PlanDomain {
 /// the plan will be recomputed in the next fixed frame.
 #[derive(Component, Clone, Default, PartialEq, Eq, Reflect, Debug)]
 #[reflect(Component)]
-#[require(Props, PlanDomain)]
+#[require(Props, PlanDomain, PlanScope)]
 pub struct Plan {
     /// The planned steps.
     pub steps: Vec<PlanStep>,
@@ -114,6 +114,27 @@ impl Plan {
     }
 }
 
+
+#[derive(Component, Debug, Default)]
+pub(crate) struct PlanScope {
+    pub stack: Vec<Entity>,
+}
+impl PlanScope {
+    #[inline]
+    pub fn push(&mut self, task: Entity) {
+        self.stack.push(task);
+    }
+
+    #[inline]
+    pub fn pop(&mut self, task: Entity) -> bool {
+        let matched = self.stack.last() == Some(&task);
+        if matched {
+            self.stack.pop();
+        }
+        matched
+    }
+}
+
 /// A step in the plan execution.
 #[derive(Debug, Clone, PartialEq, Eq, Reflect)]
 pub enum PlanStep {
@@ -122,6 +143,15 @@ pub enum PlanStep {
     ValidateConditions(Entity),
     /// Runs the operator system of [`Entity`] with the [`Operator`] component.
     RunOperator(Entity),
+    /// Runs the enter operator system of [`Entity`].
+    RunEnterOperator {
+        /// The task entity.
+        entity: Entity,
+        /// Whether should push this task onto [`PlanStack`].
+        push_stack: bool,
+    },
+    /// Runs the exit operator system of [`Entity`].
+    RunExitOperator(Entity),
     /// Applies the effects of [`Entity`] with the [`Effects`] component;
     ApplyEffects(Entity),
 }
@@ -131,6 +161,8 @@ impl PlanStep {
         match self {
             PlanStep::ValidateConditions(entity) => *entity,
             PlanStep::RunOperator(entity) => *entity,
+            PlanStep::RunEnterOperator{ entity, .. } => *entity,
+            PlanStep::RunExitOperator(entity) => *entity,
             PlanStep::ApplyEffects(entity) => *entity,
         }
     }
@@ -213,6 +245,14 @@ pub(crate) fn log_plan(
             PlanStep::RunOperator(entity) => {
                 let name = name(*entity)?;
                 log.push_str(&format!("  - operator: {name}\n"));
+            },
+            PlanStep::RunEnterOperator { entity, .. } => {
+                let name = name(*entity)?;
+                log.push_str(&format!("  - enter operator: {name}\n"));
+            },
+            PlanStep::RunExitOperator(entity) => {
+                let name = name(*entity)?;
+                log.push_str(&format!("  - exit operator: {name}\n"));
             },
             PlanStep::ApplyEffects(entity) => {
                 let name = name(*entity)?;

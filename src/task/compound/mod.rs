@@ -3,7 +3,7 @@
 use bevy_ecs::system::SystemId;
 
 use crate::{
-    plan::{CheckStep, Plan, PlanStep, mtr::Mtr}, prelude::*,
+    plan::{CheckStep, Plan, PlanStep, mtr::Mtr}, prelude::*, task::scope::{EnterOperator, ExitOperator},
 };
 
 pub mod relationship;
@@ -126,7 +126,7 @@ pub enum DecomposeResult {
 }
 
 /// Task data queried by `Decompose`.
-pub type TaskTuple = (Entity, bool, Option<TypeErasedCompoundTask>);
+pub type TaskTuple = (Entity, bool, bool, bool, Option<TypeErasedCompoundTask>);
 
 /// Helper for decomposition.
 #[allow(missing_docs)]
@@ -136,6 +136,8 @@ pub struct Decompose {
     pub q_tasks: QueryState<
         (
             Entity,
+            Has<EnterOperator>,
+            Has<ExitOperator>,
             Has<Operator>,
             Option<&'static TypeErasedCompoundTask>,
         ),

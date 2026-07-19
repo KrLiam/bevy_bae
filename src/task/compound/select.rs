@@ -29,8 +29,8 @@ fn decompose_select(
         return DecomposeResult::Failure;
     };
     tasks_buffer.extend(d.q_tasks.iter_many(world, tasks).map(
-        |(task_entity, has_operator, compound_task)| {
-            (task_entity, has_operator, compound_task.cloned())
+        |(task_entity, has_enter, has_exit, has_operator, compound_task)| {
+            (task_entity, has_enter, has_exit, has_operator, compound_task.cloned())
         },
     ));
 
@@ -38,7 +38,7 @@ fn decompose_select(
 
     'task: for (
         i,
-        (task_entity, has_operator, compound_task),
+        (task_entity, has_enter, has_exit, has_operator, compound_task),
     ) in tasks_buffer.drain(..).enumerate()
     {
         let (mtr, previous_mtr) = {
@@ -56,6 +56,13 @@ fn decompose_select(
             && !valid
         {
             continue 'task;
+        }
+
+        if has_enter {
+            input.ctx_mut().plan.steps.push(PlanStep::RunEnterOperator {
+                entity: task_entity,
+                push_stack: has_exit
+            });
         }
         
         if has_operator {
@@ -80,7 +87,13 @@ fn decompose_select(
         if input.ctx_mut().plan.is_empty() {
             return DecomposeResult::Failure;
         }
+
         d.apply_effects(world, task_entity, input.ctx_mut());
+        
+        if has_exit {
+            input.ctx_mut().plan.steps.push(PlanStep::RunExitOperator(task_entity));
+        }
+        
         // only use the first match
         input.ctx_mut().plan.mtr.push(i as u16);
         return DecomposeResult::Success;

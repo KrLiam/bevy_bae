@@ -30,12 +30,12 @@ fn decompose_sequence(
     if tasks.is_empty() { return DecomposeResult::Failure }
 
     tasks_buffer.extend(d.q_tasks.iter_many(world, tasks).map(
-        |(task_entity, has_operator, compound_task)| {
-            (task_entity, has_operator, compound_task.cloned())
+        |(task_entity, has_enter, has_exit, has_operator, compound_task)| {
+            (task_entity, has_enter, has_exit, has_operator, compound_task.cloned())
         },
     ));
 
-    for (task_entity, has_operator, compound_task) in tasks_buffer.drain(..)
+    for (task_entity, has_enter, has_exit, has_operator, compound_task) in tasks_buffer.drain(..)
     {
         if let Some(valid) = d.validate_conditions(world, task_entity, input.ctx_mut())
             && !valid
@@ -43,6 +43,13 @@ fn decompose_sequence(
             return DecomposeResult::Failure;
         }
         
+        if has_enter {
+            input.ctx_mut().plan.steps.push(PlanStep::RunEnterOperator {
+                entity: task_entity,
+                push_stack: has_exit
+            });
+        }
+
         if has_operator {
             input.ctx_mut().plan.steps.push(PlanStep::RunOperator(task_entity));
         } else if let Some(compound_task) = compound_task {
@@ -62,7 +69,12 @@ fn decompose_sequence(
         if input.ctx_mut().plan.is_empty() {
             return DecomposeResult::Failure;
         }
+
         d.apply_effects(world, task_entity, input.ctx_mut());
+
+        if has_exit {
+            input.ctx_mut().plan.steps.push(PlanStep::RunExitOperator(task_entity));
+        }
     }
     DecomposeResult::Success
 }

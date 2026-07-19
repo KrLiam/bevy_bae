@@ -8,6 +8,7 @@ use crate::plan::{PlanDomain, PlanReactivity, PlanStep};
 use crate::plan::mtr::Mtr;
 use crate::prelude::*;
 use crate::task::compound::{Decompose, DecomposeContext, DecomposeInput, DecomposeResult, TypeErasedCompoundTask};
+use crate::task::scope::{EnterOperator, ExitOperator};
 
 /// [`EntityEvent`] for updating a plan. Trigger this on an entity with a [`Plan`] to update its plan.
 /// Updating it will only have an effect if the new plan found has a higher priority than the current one.
@@ -68,7 +69,7 @@ pub fn update_plan_inner(
     mut reacts: Local<QueryState<&mut PlanReactivity>>,
     mut tasks: Local<
         QueryState<
-            (Entity, Has<Operator>, Option<&TypeErasedCompoundTask>),
+            (Entity, Has<EnterOperator>, Has<ExitOperator>, Has<Operator>, Option<&TypeErasedCompoundTask>),
             Or<(With<Operator>, With<TypeErasedCompoundTask>)>,
         >,
     >,
@@ -85,16 +86,20 @@ pub fn update_plan_inner(
     let mut ctx = DecomposeContext::default();
     ctx.world_state.extend(world.entity(update.entity).props());
 
-    let Ok((entity, has_operator, compound_task)) =
+    let Ok((entity, has_enter, has_exit, has_operator, compound_task)) =
         tasks
             .get(world, root)
-            .map(|(entity, has_operator, compound_task)| {
-                (entity, has_operator, compound_task.cloned())
+            .map(|(entity, has_enter, has_exit, has_operator, compound_task)| {
+                (entity, has_enter, has_exit, has_operator, compound_task.cloned())
             })
     else {
         world.entity_mut(root).insert(Plan::default());
         return Err(BevyError::from("Called `update_plan` for an entity without any tasks. Ensure it has either an `Operator` or a `CompoundTask` like `Select` or `Sequence`".to_string()));
     };
+
+    if has_enter {
+        ctx.plan.steps.push(PlanStep::RunEnterOperator { entity, push_stack: has_exit });
+    }
 
     if let Some(false) = d.validate_conditions(world, entity, &mut ctx) {
         ctx.plan.clear();
@@ -133,6 +138,10 @@ pub fn update_plan_inner(
     };
 
     d.apply_effects(world, entity, &mut ctx);
+
+    if has_exit {
+        ctx.plan.steps.push(PlanStep::RunExitOperator(root));
+    }
 
     if ctx.previous_mtr == ctx.plan.mtr
         && world.entity(root).get::<Plan>().is_some_and(|prev_plan| {

@@ -1,7 +1,7 @@
 //! Tests the plan execution
 
 use bevy::{log::LogPlugin, prelude::*, time::TimeUpdateStrategy};
-use bevy_bae::{plan::{PlanDomain, PlanReactivity}, prelude::*};
+use bevy_bae::{plan::{PlanDomain, PlanReactivity}, prelude::*, task::scope::{EnterOperator, ExitOperator}};
 use bevy_ecs::entity_disabling::Disabled;
 use std::sync::Mutex;
 
@@ -362,6 +362,164 @@ fn compound_effects_are_not_applied_on_abort() {
 }
 
 #[test]
+fn nested_enter_exit_operator_on_success() {
+    let mut app = App::test((
+        Name::new("a"),
+        Sequence,
+        EnterOperator::new(scope_system("enter a")),
+        tasks! [
+            op("b"),
+            (
+                Name::new("c"),
+                Operator::new(operator_system("c", 1)),
+                EnterOperator::new(scope_system("enter c")),
+                ExitOperator::new(scope_system("exit c")),
+            )
+        ],
+        ExitOperator::new(scope_system("exit a")),
+    ));
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["enter a", "b"]);
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["enter a", "b", "enter c", "c", "exit c", "exit a"]);
+}
+
+#[test]
+fn nested_enter_exit_operator_on_replan() {
+    let mut app = App::test((
+        Name::new("a"),
+        Sequence,
+        tasks! [
+            (
+                Name::new("b"),
+                EnterOperator::new(scope_system("enter b")),
+                Operator::new(operator_system("b", 1)),
+            )
+        ],
+        ExitOperator::new(scope_system("exit a")),
+    ));
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["enter b", "b", "exit a"]);
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["enter b", "b", "exit a", "enter b", "b", "exit a"]);
+}
+
+#[test]
+fn exit_operator_on_success_after_ongoing() {
+    let mut app = App::test((
+        Sequence,
+        tasks! [
+            (
+                Name::new("a"),
+                EnterOperator::new(scope_system("enter a")),
+                Operator::new(operator_system("a", 3)),
+                ExitOperator::new(scope_system("exit a")),
+            ),
+            op("b")
+        ]
+    ));
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["enter a", "a"]);
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["enter a", "a", "a"]);
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["enter a", "a", "a", "a", "exit a"]);
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["enter a", "a", "a", "a", "exit a", "b"]);    
+}
+
+#[test]
+fn exit_operator_on_plan_update() {
+    let mut app = App::test((
+        Select,
+        tasks! [
+            (
+                cond_is("run_a", true),
+                op("a"),
+            ),
+            (
+                Name::new("b"),
+                Operator::new(operator_system("b", 3)),
+                ExitOperator::new(scope_system("exit b")),
+            ),
+        ],
+        ExitOperator::new(scope_system("exit root")),
+    ));
+    let root = app.get_entity("root");
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["b"]);
+
+    app.get_props_mut("root").set("run_a", true);
+    app.world_mut().commands().trigger(UpdatePlan::new(root));
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["b", "exit b", "exit root", "a", "exit root"]);
+}
+
+#[test]
+fn exit_operator_on_new_plan_inserted() {
+    let mut app = App::test((
+        Sequence,
+        tasks! [
+            (
+                Name::new("a"),
+                Operator::new(operator_system("a", 4)),
+                ExitOperator::new(scope_system("exit a")),
+            ),
+        ],
+        ExitOperator::new(scope_system("exit root")),
+    ));
+    let root = app.get_entity("root");
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["a"]);
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["a", "a"]);
+
+    app.world_mut().entity_mut(root).insert(Plan::default());
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["a", "a", "exit a", "exit root", "a"]);
+}
+
+#[test]
+fn exit_operator_on_plan_removed() {
+    let mut app = App::test((
+        Sequence,
+        tasks! [
+            (
+                Name::new("a"),
+                Operator::new(operator_system("a", 3)),
+                ExitOperator::new(scope_system("exit a")),
+            ),
+        ],
+        ExitOperator::new(scope_system("exit root")),
+    ));
+    let root = app.get_entity("root");
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["a"]);
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["a", "a"]);
+
+    app.world_mut().entity_mut(root).remove::<Plan>();
+
+    app.update();
+    assert_eq!(app.opt_log(), vec!["a", "a", "exit a", "exit root"]);
+}
+
+#[test]
 fn select_with_reactivity() {
     let mut app = App::test((
         PlanReactivity::default(),
@@ -427,7 +585,9 @@ trait TestApp {
     fn test(behavior: impl Bundle) -> App;
     #[track_caller]
     fn assert_last_opt(&self, name: impl Into<Option<&'static str>>);
+    fn opt_log(&self) -> Vec<String>;
     fn behavior_entity(&mut self) -> EntityWorldMut<'_>;
+    fn get_entity<'a>(&'a mut self, name: &'static str) -> Entity;
     fn get_props_mut<'a>(&'a mut self, name: &'static str) -> Mut<'a, Props>;
 }
 
@@ -449,7 +609,7 @@ impl TestApp for App {
         .insert_resource(TimeUpdateStrategy::ManualDuration(
             Time::<Fixed>::default().timestep(),
         ))
-        .init_resource::<LastOpt>()
+        .init_resource::<OptLog>()
         .add_systems(Startup, move |mut commands: Commands| {
             commands
                 .spawn(behavior.lock().unwrap().take().unwrap())
@@ -457,8 +617,8 @@ impl TestApp for App {
                 .insert_if_new(PlanDomain::default())
                 .trigger(UpdatePlan::new);
         })
-        .add_systems(PreUpdate, |mut last_opt: ResMut<LastOpt>| {
-            last_opt.0 = None;
+        .add_systems(PreUpdate, |mut last_opt: ResMut<OptLog>| {
+            last_opt.1 = last_opt.0.len();
         });
         app.finish();
         app.update();
@@ -470,8 +630,15 @@ impl TestApp for App {
     fn assert_last_opt(&self, expected: impl Into<Option<&'static str>>) {
         let expected: Option<&'static str> = expected.into();
         let expected: Option<String> = expected.map(Into::into);
-        let actual = self.world().resource::<LastOpt>().0.clone();
+        let log = self.world().resource::<OptLog>();
+        let actual = if log.0.len() > log.1 { log.0.last().cloned() } else { None };
         assert_eq!(expected, actual);
+    }
+
+    #[track_caller]
+    fn opt_log(&self) -> Vec<String> {
+        let actual = self.world().resource::<OptLog>().0.clone();
+        actual
     }
 
     fn behavior_entity(&mut self) -> EntityWorldMut<'_> {
@@ -484,29 +651,55 @@ impl TestApp for App {
         self.world_mut().entity_mut(entity)
     }
 
-    fn get_props_mut<'a>(&'a mut self, name: &'static str) -> Mut<'a, Props> {
-        let mut q = self.world_mut().query::<(Entity, &mut Props, &Name)>();
-        let (_, props, _) = q.iter_mut(self.world_mut())
-            .find(|(_, _, entity_name)| entity_name.as_str() == name)
+    fn get_entity<'a>(&'a mut self, name: &'static str) -> Entity {
+        let mut q = self.world_mut().query::<(Entity, &Name)>();
+        let (entity, _) = q.iter_mut(self.world_mut())
+            .find(|(_, entity_name)| entity_name.as_str() == name)
             .unwrap();
-        props
+        entity
+    }
+
+    fn get_props_mut<'a>(&'a mut self, name: &'static str) -> Mut<'a, Props> {
+        let entity = self.get_entity(name);
+        self.world_mut().get_mut::<Props>(entity).unwrap()
     }
 }
 // The following functions are not reflective of real user code and are here to make the test suite more simple to set up.
 
+
 #[derive(Resource, Default)]
-struct LastOpt(Option<String>);
+struct OptLog(Vec<String>, usize);
+
+fn operator_system(name: impl Into<String>, duration: i32) -> impl FnMut(In<OperatorInput>, ResMut<OptLog>, Local<i32>) -> OperatorStatus {
+    let name = name.into();
+    move |
+        _: In<OperatorInput>,
+        mut opt_log: ResMut<OptLog>,
+        mut counter: Local<i32>,
+    | {
+        *counter = *counter +1;
+        opt_log.0.push(name.to_string());
+        if *counter <= duration - 1 {
+            OperatorStatus::Ongoing
+        }
+        else {
+            OperatorStatus::Success
+        }
+    }
+}
+
+fn scope_system(name: impl Into<String>) -> impl FnMut(In<OperatorInput>, ResMut<OptLog>) {
+    let name = name.into();
+    move |_: In<OperatorInput>, mut opt_log: ResMut<OptLog>| {
+        opt_log.0.push(name.to_string());
+    }
+}
 
 fn op(name: &str) -> impl Bundle {
     let name = name.to_string();
     (
         Name::new(name.clone()),
-        Operator::new(
-            move |_: In<OperatorInput>, mut last_opt: ResMut<LastOpt>| -> OperatorStatus {
-                last_opt.0 = Some(name.clone());
-                OperatorStatus::Success
-            },
-        ),
+        Operator::new(operator_system(name, 1)),
     )
 }
 

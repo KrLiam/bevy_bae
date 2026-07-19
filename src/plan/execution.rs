@@ -1,4 +1,4 @@
-use crate::{plan::{CheckStep, PlanReactivity, PlanStep}, prelude::*};
+use crate::{plan::{CheckStep, PlanReactivity, PlanScope, PlanStep}, prelude::*, task::scope::{EnterOperator, ExitOperator}};
 
 
 pub(crate) fn check_plan_on_prop_change(
@@ -41,17 +41,19 @@ pub(crate) fn update_empty_plans(
 
 pub(crate) fn execute_plan(
     world: &mut World,
-    mut q_plans: Local<QueryState<(NameOrEntity, &mut Plan)>>,
+    mut q_plans: Local<QueryState<(NameOrEntity, &mut Plan, &mut PlanScope)>>,
     mut q_conditions_list: Local<QueryState<&Conditions>>,
     mut q_conditions: Local<QueryState<(&Condition, NameOrEntity)>>,
     mut q_operators: Local<QueryState<(NameOrEntity, &Operator)>>,
+    mut q_enter_operators: Local<QueryState<(NameOrEntity, &EnterOperator)>>,
+    mut q_exit_operators: Local<QueryState<(NameOrEntity, &ExitOperator)>>,
     mut q_effects_list: Local<QueryState<&Effects>>,
     mut q_effects: Local<QueryState<(NameOrEntity, &Effect)>>,
     mut plans_buffer: Local<Vec<(Entity, Option<Name>, Option<OperatorStatus>)>>,
     mut effects_buffer: Local<Vec<(Entity, Option<Name>, Effect)>>,
 ) {
     plans_buffer.extend(
-        q_plans.iter(world).map(|(name, plan)| {
+        q_plans.iter(world).map(|(name, plan, _)| {
             (name.entity, name.name.cloned(), plan.status)
         }),
     );
@@ -61,7 +63,7 @@ pub(crate) fn execute_plan(
         'plan_loop: loop {
             let Some(step) = q_plans.get(world, plan_entity)
                 .ok()
-                .and_then(|(_, plan)| plan.current_step())
+                .and_then(|(_, plan, _)| plan.current_step())
             else { break 'plan_loop };
     
             let mut status = OperatorStatus::Success;
@@ -138,6 +140,54 @@ pub(crate) fn execute_plan(
                         status = OperatorStatus::Failure;
                     }
                 },
+                PlanStep::RunEnterOperator { entity, push_stack } => {
+                    if push_stack {
+                        let Ok((_, _, mut scope)) = q_plans.get_mut(world, plan_entity)
+                        else { panic!() };
+                        scope.push(entity);
+                    }
+
+                    let input = OperatorInput {
+                        entity: plan_entity,
+                        operator: entity,
+                    };
+                    if let Ok((op_name, operator)) = q_enter_operators.get(world, entity)
+                        && let Some(system_id) = operator.system_id()
+                    {                
+                        debug!(
+                            ?plan_entity,
+                            ?plan_name,
+                            operator_entity=?op_name.entity,
+                            operator_name=?op_name.name,
+                            "running enter operator"
+                        );
+                        let _ = world.run_system_with(system_id, input);
+                        world.flush();
+                    }
+                }
+                PlanStep::RunExitOperator(entity) => {
+                    let input = OperatorInput {
+                        entity: plan_entity,
+                        operator: entity,
+                    };
+                    if let Ok((op_name, operator)) = q_exit_operators.get(world, entity)
+                        && let Some(system_id) = operator.system_id()
+                    {                
+                        debug!(
+                            ?plan_entity,
+                            ?plan_name,
+                            operator_entity=?op_name.entity,
+                            operator_name=?op_name.name,
+                            "running enter operator"
+                        );
+                        let _ = world.run_system_with(system_id, input);
+                        world.flush();
+                    }
+
+                    let Ok((_, _, mut scope)) = q_plans.get_mut(world, plan_entity)
+                    else { panic!() };
+                    scope.pop(entity);
+                }
                 PlanStep::ApplyEffects(entity) => {
                     let Ok(c) = q_effects_list.get(world, entity) else { continue };
                     effects_buffer.extend(
@@ -174,7 +224,7 @@ pub(crate) fn execute_plan(
     
             match status {
                 OperatorStatus::Success => {
-                    let Ok((_, mut plan)) = q_plans.get_mut(world, plan_entity)
+                    let Ok((_, mut plan, _)) = q_plans.get_mut(world, plan_entity)
                     else { panic!() };
     
                     debug!(
@@ -193,7 +243,7 @@ pub(crate) fn execute_plan(
             }
     
             let mut plan = q_plans.get_mut(world, plan_entity)
-                .map(|(_, plan)| plan)
+                .map(|(_, plan, _)| plan)
                 .unwrap();
             plan.status = Some(status);
             debug!("plan status is {:?}", plan.status);
@@ -209,12 +259,53 @@ pub(crate) fn execute_plan(
             
             // check whether the next step should execute now
             ran_operator = ran_operator || matches!(step, PlanStep::RunOperator(_));
-            let run_now = !ran_operator || ran_operator && matches!(next_step, Some(PlanStep::ApplyEffects(_)));
-            if run_now {
+            let can_run_next_step = matches!(next_step, Some(PlanStep::ApplyEffects(_) | PlanStep::RunExitOperator(_)));
+            let run_next_step = !ran_operator || can_run_next_step;
+            if run_next_step {
                 continue
             }
 
             break 'plan_loop
         }
+    }
+}
+
+pub fn run_exit_operators_on_inserted_plan(
+    event: On<Insert, Plan>,
+    mut plans: Query<(&Plan, &mut PlanScope)>,
+    exit_operators: Query<&ExitOperator>,
+    mut cmds: Commands,
+) {
+    let Ok((_plan, mut scope)) = plans.get_mut(event.entity) else { return };
+
+    while let Some(operator_entity) = scope.stack.pop() {
+        let Ok(operator) = exit_operators.get(operator_entity) else { continue };
+        let Some(system_id) = operator.system_id() else { continue };
+
+        let input = OperatorInput {
+            entity: event.entity,
+            operator: operator_entity
+        };
+        cmds.run_system_with(system_id, input);
+    }
+}
+
+pub fn run_exit_operators_on_removed_plan(
+    event: On<Remove, Plan>,
+    mut plans: Query<(&Plan, &mut PlanScope)>,
+    exit_operators: Query<&ExitOperator>,
+    mut cmds: Commands,
+) {
+    let Ok((_plan, mut scope)) = plans.get_mut(event.entity) else { return };
+
+    while let Some(operator_entity) = scope.stack.pop() {
+        let Ok(operator) = exit_operators.get(operator_entity) else { continue };
+        let Some(system_id) = operator.system_id() else { continue };
+
+        let input = OperatorInput {
+            entity: event.entity,
+            operator: operator_entity
+        };
+        cmds.run_system_with(system_id, input);
     }
 }
