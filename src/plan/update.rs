@@ -152,7 +152,7 @@ pub fn update_plan_inner(
         return Ok(());
     }
 
-    if let Ok(mut react) = reacts.get_mut(world, root) {
+    if let Ok(mut react) = reacts.get_mut(world, executor) {
         react.check_steps.clear();
         react.check_steps.extend(ctx.checked_steps);
         debug!("reactive plan set checked steps: {:?}",react.check_steps);
