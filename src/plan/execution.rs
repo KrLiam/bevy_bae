@@ -1,4 +1,4 @@
-use crate::{plan::{CheckStep, PlanReactivity, PlanScope, PlanStep}, prelude::*, task::scope::{EnterOperator, ExitOperator}};
+use crate::{plan::{CheckStep, PlanReactivity, PlanScope, PlanStep}, prelude::*, task::{observer::PlanObservers, scope::{EnterOperator, ExitOperator}}};
 
 
 pub(crate) fn check_plan_on_prop_change(
@@ -58,12 +58,13 @@ pub(crate) fn execute_plan(
         }),
     );
     for (plan_entity, plan_name, _) in plans_buffer.drain(..) {
-        let mut ran_operator = false;
+        let mut can_stop = false;
 
         'plan_loop: loop {
             let Some(step) = q_plans.get(world, plan_entity)
                 .ok()
-                .and_then(|(_, plan, _)| plan.current_step())
+                .and_then(|(_, plan, _)| if plan.paused { None } else { Some(plan) })
+                .and_then(|plan| plan.current_step())
             else { break 'plan_loop };
     
             let mut status = OperatorStatus::Success;
@@ -140,7 +141,43 @@ pub(crate) fn execute_plan(
                         );
                         status = OperatorStatus::Failure;
                     }
+
+                    can_stop = true;
                 },
+                PlanStep::RunSystem { entity, system, instant } => {
+                    let input = OperatorInput {
+                        entity: plan_entity,
+                        operator: entity,
+                    };            
+                    debug!(
+                        ?plan_entity,
+                        ?plan_name,
+                        task_entity=?entity,
+                        "running system"
+                    );
+                    if let Some(system) = system {
+                        let r = world.run_system_with(system, input);
+                        match r {
+                            Ok(r) => {
+                                status = r;
+                            },
+                            Err(err) => {
+                                debug!(
+                                    ?plan_entity,
+                                    ?plan_name,
+                                    ?err,
+                                    "operator system failed, aborting plan"
+                                );
+                                status = OperatorStatus::Failure;
+                            },
+                        }
+                        world.flush();
+                    }
+
+                    if !instant || matches!(status, OperatorStatus::Ongoing) {
+                        can_stop = true;
+                    }
+                }
                 PlanStep::RunEnterOperator { entity, push_stack } => {
                     if push_stack {
                         let Ok((_, _, mut scope)) = q_plans.get_mut(world, plan_entity)
@@ -179,7 +216,7 @@ pub(crate) fn execute_plan(
                             ?plan_name,
                             operator_entity=?op_name.entity,
                             operator_name=?op_name.name,
-                            "running enter operator"
+                            "running exit operator"
                         );
                         let _ = world.run_system_with(system_id, input);
                         world.flush();
@@ -235,11 +272,11 @@ pub(crate) fn execute_plan(
                 }
             }
     
+            let Ok((_, mut plan, _)) = q_plans.get_mut(world, plan_entity)
+            else { panic!() };
+
             match status {
-                OperatorStatus::Success => {
-                    let Ok((_, mut plan, _)) = q_plans.get_mut(world, plan_entity)
-                    else { panic!() };
-    
+                OperatorStatus::Success => {    
                     debug!(
                         ?plan_entity,
                         ?plan_name,
@@ -257,9 +294,6 @@ pub(crate) fn execute_plan(
                 }
             }
     
-            let mut plan = q_plans.get_mut(world, plan_entity)
-                .map(|(_, plan, _)| plan)
-                .unwrap();
             plan.status = Some(status);
             debug!("plan status is {:?}", plan.status);
     
@@ -273,11 +307,10 @@ pub(crate) fn execute_plan(
             }
             
             // check whether the next step should execute now
-            ran_operator = ran_operator || matches!(step, PlanStep::RunOperator(_));
             let can_run_next_step = matches!(next_step, Some(
                 PlanStep::ApplyEffects(_) | PlanStep::RunExitOperator(_) | PlanStep::Jump { .. }
             ));
-            let run_next_step = !ran_operator || can_run_next_step;
+            let run_next_step = !can_stop || can_run_next_step;
             if run_next_step {
                 continue
             }
@@ -287,7 +320,7 @@ pub(crate) fn execute_plan(
     }
 }
 
-pub fn run_exit_operators_on_inserted_plan(
+pub(crate) fn run_exit_operators_on_inserted_plan(
     event: On<Insert, Plan>,
     mut plans: Query<(&Plan, &mut PlanScope)>,
     exit_operators: Query<&ExitOperator>,
@@ -307,7 +340,7 @@ pub fn run_exit_operators_on_inserted_plan(
     }
 }
 
-pub fn run_exit_operators_on_removed_plan(
+pub(crate) fn run_exit_operators_on_removed_plan(
     event: On<Remove, Plan>,
     mut plans: Query<(&Plan, &mut PlanScope)>,
     exit_operators: Query<&ExitOperator>,
@@ -324,5 +357,19 @@ pub fn run_exit_operators_on_removed_plan(
             operator: operator_entity
         };
         cmds.run_system_with(system_id, input);
+    }
+}
+
+pub(crate) fn clear_operator_observers_on_inserted_plan(
+    event: On<Insert, Plan>,
+    mut plans: Query<&mut PlanObservers>,
+    mut cmds: Commands,
+) {
+    let Ok(mut obs) = plans.get_mut(event.entity) else { return };
+
+    for group in obs.stack.drain(..) {
+        for entity in group.observers {
+            cmds.entity(entity).despawn();
+        }
     }
 }

@@ -1,9 +1,9 @@
 //! Contains types representing a tree of more compound tasks, where the leaves are [`Operator`]s
 
-use bevy_ecs::system::SystemId;
+use bevy_ecs::{entity::EntityEquivalent, system::SystemId};
 
 use crate::{
-    plan::{CheckStep, Plan, PlanStep, mtr::Mtr}, prelude::*, task::scope::{EnterOperator, ExitOperator},
+    plan::{CheckStep, Plan, PlanStep, mtr::Mtr}, prelude::*, task::{observer::ObserverOperator, scope::{EnterOperator, ExitOperator}},
 };
 
 pub mod relationship;
@@ -127,7 +127,7 @@ pub enum DecomposeResult {
 }
 
 /// Task data queried by `Decompose`.
-pub type TaskTuple = (Entity, bool, bool, bool, Option<TypeErasedCompoundTask>);
+pub type TaskTuple = (Entity, bool, bool, bool, bool, Option<TypeErasedCompoundTask>);
 
 /// Helper for decomposition.
 #[allow(missing_docs)]
@@ -140,9 +140,10 @@ pub struct Decompose {
             Has<EnterOperator>,
             Has<ExitOperator>,
             Has<Operator>,
+            Has<ObserverOperator>,
             Option<&'static TypeErasedCompoundTask>,
         ),
-        Or<(With<Operator>, With<TypeErasedCompoundTask>)>,
+        Or<(With<Operator>, With<ObserverOperator>, With<TypeErasedCompoundTask>)>,
     >,
     pub q_condition_lists: QueryState<&'static Conditions>,
     pub q_conditions: QueryState<&'static Condition>,
@@ -152,6 +153,28 @@ pub struct Decompose {
 }
 
 impl Decompose {
+    ///
+    #[inline(always)]
+    pub fn get_tasks<EntityList>(&mut self, world: &World, entities: EntityList, buffer: &mut Vec<TaskTuple>)
+    where EntityList: IntoIterator<Item: EntityEquivalent> {
+        buffer.extend(self.q_tasks.iter_many(world, entities).map(
+            |(task_entity, has_enter, has_exit, has_operator, has_observer, compound_task)| {
+                (task_entity, has_enter, has_exit, has_operator, has_observer, compound_task.cloned())
+            },
+        ));
+    }
+
+    ///
+    #[inline(always)]
+    pub fn get_task(&mut self, world: &World, entity: Entity) -> Option<TaskTuple> {
+        self.q_tasks
+            .get(world, entity)
+            .map(|(entity, has_enter, has_exit, has_operator, has_observer, compound_task)| {
+                (entity, has_enter, has_exit, has_operator, has_observer, compound_task.cloned())
+            })
+            .ok()
+    }
+
     /// Validates the given conditions and records them in the `DecomposeContext`.
     #[inline(always)]
     pub fn validate_conditions(

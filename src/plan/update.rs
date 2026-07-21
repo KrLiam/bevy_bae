@@ -7,8 +7,8 @@ use core::marker::PhantomData;
 use crate::plan::{PlanDomain, PlanReactivity, PlanStep};
 use crate::plan::mtr::Mtr;
 use crate::prelude::*;
-use crate::task::compound::{Decompose, DecomposeContext, DecomposeInput, DecomposeResult, TypeErasedCompoundTask};
-use crate::task::scope::{EnterOperator, ExitOperator};
+use crate::task::compound::{Decompose, DecomposeContext, DecomposeInput, DecomposeResult};
+use crate::task::observer::ObserverOperatorSystems;
 
 /// [`EntityEvent`] for updating a plan. Trigger this on an entity with a [`Plan`] to update its plan.
 /// Updating it will only have an effect if the new plan found has a higher priority than the current one.
@@ -67,12 +67,6 @@ pub fn update_plan_inner(
     world: &mut World,
     mut plans: Local<QueryState<&PlanDomain>>,
     mut reacts: Local<QueryState<&mut PlanReactivity>>,
-    mut tasks: Local<
-        QueryState<
-            (Entity, Has<EnterOperator>, Has<ExitOperator>, Has<Operator>, Option<&TypeErasedCompoundTask>),
-            Or<(With<Operator>, With<TypeErasedCompoundTask>)>,
-        >,
-    >,
     mut d: Local<Decompose>,
 ) -> Result {
     let executor = update.entity;
@@ -86,16 +80,17 @@ pub fn update_plan_inner(
     let mut ctx = DecomposeContext::default();
     ctx.world_state.extend(world.entity(update.entity).props());
 
-    let Ok((entity, has_enter, has_exit, has_operator, compound_task)) =
-        tasks
-            .get(world, root)
-            .map(|(entity, has_enter, has_exit, has_operator, compound_task)| {
-                (entity, has_enter, has_exit, has_operator, compound_task.cloned())
-            })
+    let Some((entity, has_enter, has_exit, has_operator, has_observer, compound_task))
+        = d.get_task(world, root)
     else {
         world.entity_mut(root).insert(Plan::default());
         return Err(BevyError::from("Called `update_plan` for an entity without any tasks. Ensure it has either an `Operator` or a `CompoundTask` like `Select` or `Sequence`".to_string()));
     };
+
+    if has_observer {
+        let systems = world.resource::<ObserverOperatorSystems>();
+        ctx.plan.steps.push(PlanStep::RunSystem { entity, system: Some(systems.enter), instant: true });
+    }
 
     if has_enter {
         ctx.plan.steps.push(PlanStep::RunEnterOperator { entity, push_stack: has_exit });
@@ -131,11 +126,12 @@ pub fn update_plan_inner(
             },
             DecomposeResult::Rejection => return Ok(()),
         }
-    } else {
-        unreachable!(
-            "Bevy should guarantee that `AnyOf` contains at least one element that is `Some`"
-        )
     };
+
+    if has_observer {
+        let systems = world.resource::<ObserverOperatorSystems>();
+        ctx.plan.steps.push(PlanStep::RunSystem { entity, system: Some(systems.exit), instant: true });
+    }
 
     d.apply_effects(world, entity, &mut ctx);
 

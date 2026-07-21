@@ -1,7 +1,7 @@
 //! Tests the plan execution
 
 use bevy::{log::LogPlugin, prelude::*, time::TimeUpdateStrategy};
-use bevy_bae::{plan::{PlanDomain, PlanReactivity}, prelude::*, task::{compound::loop_task::Loop, scope::{EnterOperator, ExitOperator}}};
+use bevy_bae::{plan::{PlanDomain, PlanReactivity}, prelude::*, task::{compound::loop_task::Loop, observer::ObserverOperator, scope::{EnterOperator, ExitOperator}}};
 use bevy_ecs::entity_disabling::Disabled;
 use std::sync::Mutex;
 
@@ -607,6 +607,46 @@ fn loop_with_enter_exit_operator() {
     ]);
 }
 
+#[derive(EntityEvent, Debug, Clone)]
+struct TestEvent(pub Entity);
+
+#[test]
+fn observer_operator() {
+    let mut app = App::test((
+        ObserverOperator::new(|In((event, _)): In<(TestEvent, OperatorInput)>| {
+            println!("Event fired {:?}.", event);
+            OperatorStatus::Success
+        }),
+    ));
+
+    assert_eq!(app.get_plan("root").index, 0);
+
+    // spawn observer
+    app.update();
+    assert_eq!(app.get_plan("root").status.unwrap(), OperatorStatus::Ongoing); 
+    assert_eq!(app.get_plan("root").index, 1);
+    
+    // exit observer (ongoing)
+    app.update();
+    assert_eq!(app.get_plan("root").status.unwrap(), OperatorStatus::Ongoing); 
+    assert_eq!(app.get_plan("root").index, 1);
+    
+    // exit observer (ongoing)
+    app.update();
+    assert_eq!(app.get_plan("root").status.unwrap(), OperatorStatus::Ongoing); 
+    assert_eq!(app.get_plan("root").index, 1);
+    
+    let root = app.get_entity("root");
+    app.world_mut().trigger(TestEvent(root));
+    app.world_mut().flush();
+    
+    assert_eq!(app.get_plan("root").index, 1);
+
+    // exit observer (success, replan)
+    app.update();
+    assert_eq!(*app.get_plan("root"), Plan::default());
+}
+
 #[test]
 fn logs_plan() {
     let mut app = App::test((
@@ -636,6 +676,7 @@ trait TestApp {
     fn behavior_entity(&mut self) -> EntityWorldMut<'_>;
     fn get_entity<'a>(&'a mut self, name: &'static str) -> Entity;
     fn get_props_mut<'a>(&'a mut self, name: &'static str) -> Mut<'a, Props>;
+    fn get_plan(&mut self, name: &'static str) -> &Plan;
 }
 
 impl TestApp for App {
@@ -709,6 +750,11 @@ impl TestApp for App {
     fn get_props_mut<'a>(&'a mut self, name: &'static str) -> Mut<'a, Props> {
         let entity = self.get_entity(name);
         self.world_mut().get_mut::<Props>(entity).unwrap()
+    }
+
+    fn get_plan(&mut self, name: &'static str) -> &Plan {
+        let e = self.get_entity(name);
+        self.world().get::<Plan>(e).unwrap()
     }
 }
 // The following functions are not reflective of real user code and are here to make the test suite more simple to set up.

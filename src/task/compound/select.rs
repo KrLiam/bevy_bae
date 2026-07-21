@@ -3,7 +3,7 @@
 use std::ops::DerefMut;
 
 use crate::{
-    plan::PlanStep, prelude::*, task::compound::{Decompose, DecomposeId, DecomposeInput, DecomposeResult, TaskTuple},
+    plan::PlanStep, prelude::*, task::{compound::{Decompose, DecomposeId, DecomposeInput, DecomposeResult, TaskTuple}, observer::ObserverOperatorSystems},
 };
 
 /// A [`CompoundTask`] that decomposes into the first valid subtask.
@@ -28,17 +28,13 @@ fn decompose_select(
     let Ok(tasks) = d.q_task_lists.get(world, input.compound_task) else {
         return DecomposeResult::Failure;
     };
-    tasks_buffer.extend(d.q_tasks.iter_many(world, tasks).map(
-        |(task_entity, has_enter, has_exit, has_operator, compound_task)| {
-            (task_entity, has_enter, has_exit, has_operator, compound_task.cloned())
-        },
-    ));
+    d.get_tasks(world, tasks, &mut tasks_buffer);
 
     let backup_ctx = input.ctx_mut().clone();
 
     'task: for (
         i,
-        (task_entity, has_enter, has_exit, has_operator, compound_task),
+        (task_entity, has_enter, has_exit, has_operator, has_observer, compound_task),
     ) in tasks_buffer.drain(..).enumerate()
     {
         let (mtr, previous_mtr) = {
@@ -56,6 +52,11 @@ fn decompose_select(
             && !valid
         {
             continue 'task;
+        }
+
+        if has_observer {
+            let systems = world.resource::<ObserverOperatorSystems>();
+            input.ctx_mut().plan.steps.push(PlanStep::RunSystem { entity: task_entity, system: Some(systems.enter), instant: true });
         }
 
         if has_enter {
@@ -81,13 +82,17 @@ fn decompose_select(
                     continue;
                 }
             }
-        } else {
-            unreachable!()
         }
+
         if input.ctx_mut().plan.is_empty() {
             return DecomposeResult::Failure;
         }
 
+        if has_observer {
+            let systems = world.resource::<ObserverOperatorSystems>();
+            input.ctx_mut().plan.steps.push(PlanStep::RunSystem { entity: task_entity, system: Some(systems.exit), instant: true });
+        }
+        
         d.apply_effects(world, task_entity, input.ctx_mut());
         
         if has_exit {

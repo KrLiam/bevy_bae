@@ -3,7 +3,7 @@
 use std::ops::DerefMut;
 
 use crate::{
-    plan::PlanStep, prelude::*, task::compound::{Decompose, DecomposeId, DecomposeInput, DecomposeResult, TaskTuple},
+    plan::PlanStep, prelude::*, task::{compound::{Decompose, DecomposeId, DecomposeInput, DecomposeResult, TaskTuple}, observer::ObserverOperatorSystems},
 };
 
 /// A [`CompoundTask`] that decomposes into all subtasks, given that they are all valid.
@@ -28,21 +28,21 @@ fn decompose_sequence(
         return DecomposeResult::Failure;
     };
     if tasks.is_empty() { return DecomposeResult::Failure }
+    d.get_tasks(world, tasks, &mut tasks_buffer);
 
-    tasks_buffer.extend(d.q_tasks.iter_many(world, tasks).map(
-        |(task_entity, has_enter, has_exit, has_operator, compound_task)| {
-            (task_entity, has_enter, has_exit, has_operator, compound_task.cloned())
-        },
-    ));
-
-    for (task_entity, has_enter, has_exit, has_operator, compound_task) in tasks_buffer.drain(..)
+    for (task_entity, has_enter, has_exit, has_operator, has_observer, compound_task) in tasks_buffer.drain(..)
     {
         if let Some(valid) = d.validate_conditions(world, task_entity, input.ctx_mut())
             && !valid
         {
             return DecomposeResult::Failure;
         }
-        
+
+        if has_observer {
+            let systems = world.resource::<ObserverOperatorSystems>();
+            input.ctx_mut().plan.steps.push(PlanStep::RunSystem { entity: task_entity, system: Some(systems.enter), instant: true });
+        }
+
         if has_enter {
             input.ctx_mut().plan.steps.push(PlanStep::RunEnterOperator {
                 entity: task_entity,
@@ -63,11 +63,15 @@ fn decompose_sequence(
                 Ok(DecomposeResult::Rejection) => return DecomposeResult::Rejection,
                 Ok(DecomposeResult::Failure) | Err(_) => return DecomposeResult::Failure,
             }
-        } else {
-            unreachable!()
         }
+
         if input.ctx_mut().plan.is_empty() {
             return DecomposeResult::Failure;
+        }
+
+        if has_observer {
+            let systems = world.resource::<ObserverOperatorSystems>();
+            input.ctx_mut().plan.steps.push(PlanStep::RunSystem { entity: task_entity, system: Some(systems.exit), instant: true });
         }
 
         d.apply_effects(world, task_entity, input.ctx_mut());

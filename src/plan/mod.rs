@@ -2,7 +2,7 @@
 
 use bevy_ecs::{entity_disabling::Disabled, lifecycle::HookContext, query::QueryEntityError, world::DeferredWorld};
 
-use crate::{plan::mtr::Mtr, prelude::*};
+use crate::{plan::mtr::Mtr, prelude::*, task::OperatorId};
 
 pub(crate) mod execution;
 pub mod mtr;
@@ -36,6 +36,8 @@ pub struct Plan {
     pub steps: Vec<PlanStep>,
     /// The index of the current step.
     pub index: usize,
+    /// Whether the plan execution is paused.
+    pub paused: bool,
     /// The [`OperatorStatus`] returned by the current operator.
     pub status: Option<OperatorStatus>,
     /// The [`Mtr`] of the full plan when it was created.
@@ -154,6 +156,17 @@ pub enum PlanStep {
     RunExitOperator(Entity),
     /// Applies the effects of [`Entity`] with the [`Effects`] component;
     ApplyEffects(Entity),
+    /// Runs a system.
+    RunSystem {
+        /// The task that originated this step.
+        entity: Entity,
+        /// The system to be executed.
+        #[reflect(ignore)]
+        system: Option<OperatorId>,
+        /// Whether execution immediately continues
+        /// after processing this step.
+        instant: bool,
+    },
     /// Jumps execution to step at `index`.
     Jump {
         /// The task that originated this step.
@@ -171,6 +184,7 @@ impl PlanStep {
             PlanStep::RunEnterOperator{ entity, .. } => *entity,
             PlanStep::RunExitOperator(entity) => *entity,
             PlanStep::ApplyEffects(entity) => *entity,
+            PlanStep::RunSystem { entity, .. } => *entity,
             PlanStep::Jump { entity, .. } => *entity,
         }
     }
@@ -253,6 +267,10 @@ pub(crate) fn log_plan(
             PlanStep::RunOperator(entity) => {
                 let name = name(*entity)?;
                 log.push_str(&format!("  - operator: {name}\n"));
+            },
+            PlanStep::RunSystem { entity,.. } => {
+                let name = name(*entity)?;
+                log.push_str(&format!("  - system: {name}\n"));
             },
             PlanStep::RunEnterOperator { entity, .. } => {
                 let name = name(*entity)?;

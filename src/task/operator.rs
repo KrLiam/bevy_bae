@@ -10,6 +10,7 @@ use crate::task::validation::BaeTaskPresent;
 
 
 /// Inputs for an operator.
+#[derive(Debug, Clone, Copy)]
 pub struct OperatorInput {
     /// The entity up the hierarchy that holds the [`Plan`]. This is usually your entity of interest.
     pub entity: Entity,
@@ -91,6 +92,18 @@ impl Operator {
     /// Shorthand for creating an operator that simply returns `status`.
     pub fn noop_with(status: OperatorStatus) -> Self {
         Self::new(move |_: In<OperatorInput>| status)
+    }
+
+    /// Shorthand for creating an operator that pauses the plan.
+    pub fn pause() -> Self {
+        Self::new(move |
+            input: In<OperatorInput>,
+            mut plans: Query<&mut Plan>,
+        | {
+            let Ok(mut plan) = plans.get_mut(input.entity) else { return OperatorStatus::Ongoing };
+            plan.paused = true;
+            OperatorStatus::Ongoing
+        })
     }
 
     /// Returns the [`SystemId`] of the registered operator one-shot system.

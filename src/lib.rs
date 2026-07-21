@@ -41,9 +41,9 @@ pub use estr::Estr;
 
 use crate::{
     plan::{
-        execution::{check_plan_on_prop_change, execute_plan, run_exit_operators_on_inserted_plan, run_exit_operators_on_removed_plan, update_empty_plans}, log_plan, update::update_plan,
+        execution::{check_plan_on_prop_change, clear_operator_observers_on_inserted_plan, execute_plan, run_exit_operators_on_inserted_plan, run_exit_operators_on_removed_plan, update_empty_plans}, log_plan, update::update_plan,
     }, prelude::*, task::{
-        compound::{CompoundAppExt, loop_task::Loop}, validation::{insert_bae_task_present_on_add, remove_bae_task_present_on_remove},
+        compound::{CompoundAppExt, loop_task::Loop}, observer::register_observer_operator_systems, validation::{insert_bae_task_present_on_add, remove_bae_task_present_on_remove},
     },
 };
 
@@ -96,7 +96,10 @@ impl Plugin for BaePlugin {
                     .in_set(BaeSystems::ExecutePlan),),
             )
             .add_observer(run_exit_operators_on_inserted_plan)
-            .add_observer(run_exit_operators_on_removed_plan);
+            .add_observer(run_exit_operators_on_removed_plan)
+            .add_observer(clear_operator_observers_on_inserted_plan);
+    
+        register_observer_operator_systems(app.world_mut());
     }
 }
 
