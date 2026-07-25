@@ -38,10 +38,18 @@ pub struct Plan {
     pub index: usize,
     /// Whether the plan execution is paused.
     pub paused: bool,
+    /// Whether this plan can be replaced. If set to `true`
+    /// all `UpdatePlan` events are postponed until the plan
+    /// is unlocked.
+    pub locked: bool,
     /// The [`OperatorStatus`] returned by the current operator.
     pub status: Option<OperatorStatus>,
     /// The [`Mtr`] of the full plan when it was created.
     pub mtr: Mtr,
+
+    /// If `locked` is `true` and a `UpdatePlan` event was triggered,
+    /// this flag is set to `true`.
+    attempted_replan: bool,
 }
 
 impl Plan {

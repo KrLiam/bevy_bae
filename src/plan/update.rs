@@ -65,13 +65,20 @@ pub fn update_plan(
 pub fn update_plan_inner(
     update: In<UpdatePlan>,
     world: &mut World,
-    mut plans: Local<QueryState<&PlanDomain>>,
+    mut plans: Local<QueryState<(&mut Plan, &PlanDomain)>>,
     mut reacts: Local<QueryState<&mut PlanReactivity>>,
     mut d: Local<Decompose>,
 ) -> Result {
     let executor = update.entity;
-    let Ok(domain) = plans.get(world, executor)
+    let Ok((mut plan, domain)) = plans.get_mut(world, executor)
     else { return Err(BevyError::from("Called `update_plan` on entity without Plan.")) };
+
+    if plan.locked {
+        plan.attempted_replan = true;
+        return Ok(())
+    }
+    plan.attempted_replan = false;
+
     let root = match domain {
         PlanDomain::This => executor,
         PlanDomain::Entity(entity) => *entity,

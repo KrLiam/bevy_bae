@@ -1,8 +1,18 @@
 use crate::{plan::{CheckStep, PlanReactivity, PlanScope, PlanStep}, prelude::*, task::{observer::PlanObservers, scope::{EnterOperator, ExitOperator}}};
 
+pub(crate) fn update_unlocked_plan(
+    mut plans: Query<(Entity, &Plan)>,
+    mut commands: Commands,
+) {
+    for (entity, plan) in plans.iter_mut() {
+        if !plan.locked && plan.attempted_replan {
+            commands.entity(entity).trigger(UpdatePlan::new);
+        }
+    }
+}
 
 pub(crate) fn check_plan_on_prop_change(
-    entities: Query<(Entity, &Plan,&Props, &PlanReactivity), Changed<Props>>,
+    entities: Query<(Entity, &Plan, &Props, &PlanReactivity), Changed<Props>>,
     mut cmds: Commands,
 ) {
     for (entity, plan, props, react) in entities {
