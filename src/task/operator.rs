@@ -19,9 +19,10 @@ pub struct OperatorInput {
 }
 
 /// The return type of [`Operator`]s.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Reflect)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Hash, Reflect)]
 pub enum OperatorStatus {
     /// The task has completed successfully. Proceed to the next step of the plan.
+    #[default]
     Success,
     /// The task is still running. Stay in the current step of the plan.
     Ongoing,
