@@ -37,7 +37,7 @@ pub type OperatorId = SystemId<In<OperatorInput>, OperatorStatus>;
 /// The smallest unit of a plan, representing a single step. Contains a system that gets called for you during the execution of the plan.
 #[derive(Component, Reflect)]
 #[reflect(Component)]
-#[component(on_insert = Self::on_insert_hook, on_replace = Self::on_replace_hook)]
+#[component(on_insert = Self::on_insert_hook, on_discard = Self::on_replace_hook)]
 #[require(BaeTaskPresent)]
 pub struct Operator {
     #[reflect(ignore)]

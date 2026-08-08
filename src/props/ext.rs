@@ -3,8 +3,8 @@
 use std::sync::LazyLock;
 
 use bevy_ecs::{
-    system::{Commands, EntityCommands},
-    world::{DeferredWorld, EntityRef, EntityWorldMut, World},
+    system::EntityCommands,
+    world::{EntityRef, EntityWorldMut},
 };
 use estr::Estr;
 
@@ -29,24 +29,6 @@ pub trait PropsExt {
         T: From<Value> + Default + 'static,
     {
         self.props().get(name)
-    }
-}
-
-impl PropsExt for World {
-    fn props(&self) -> &Props {
-        match self.get_resource::<Props>() {
-            Some(p) => p,
-            None => &EMPTY_PROPS,
-        }
-    }
-}
-
-impl<'w> PropsExt for DeferredWorld<'w> {
-    fn props(&self) -> &Props {
-        match self.get_resource::<Props>() {
-            Some(p) => p,
-            None => &EMPTY_PROPS,
-        }
     }
 }
 
@@ -87,12 +69,6 @@ pub trait PropsMutExt {
     }
 }
 
-impl PropsMutExt for World {
-    fn props_mut(&mut self) -> &mut Props {
-        self.get_resource_or_init::<Props>().into_inner()
-    }
-}
-
 impl<'w> PropsMutExt for EntityWorldMut<'w> {
     fn props_mut(&mut self) -> &mut Props {
         self.entry::<Props>().or_default().into_mut().into_inner()
@@ -128,32 +104,6 @@ impl<P: PropsMutExt> PropCommandsExt for P {
 
     fn clear_props(&mut self) -> &mut Self {
         self.props_mut().clear();
-        self
-    }
-}
-
-impl<'w, 's> PropCommandsExt for Commands<'w, 's> {
-    fn set_prop(&mut self, name: impl Into<Estr>, value: impl Into<Value>) -> &mut Self {
-        let name = name.into();
-        let value = value.into();
-        self.queue(move |world: &mut World| {
-            world.set_prop(name, value);
-        });
-        self
-    }
-
-    fn remove_prop(&mut self, name: impl Into<Estr>) -> &mut Self {
-        let name = name.into();
-        self.queue(move |world: &mut World| {
-            world.remove_prop(name);
-        });
-        self
-    }
-
-    fn clear_props(&mut self) -> &mut Self {
-        self.queue(|world: &mut World| {
-            world.clear_props();
-        });
         self
     }
 }

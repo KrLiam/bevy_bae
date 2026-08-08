@@ -16,7 +16,7 @@ pub type ScopeOperatorId = SystemId<In<OperatorInput>, ()>;
 /// only once.
 #[derive(Component, Reflect)]
 #[reflect(Component)]
-#[component(on_insert = Self::on_insert_hook, on_replace = Self::on_replace_hook)]
+#[component(on_insert = Self::on_insert_hook, on_discard = Self::on_replace_hook)]
 #[require(BaeTaskPresent)]
 pub struct EnterOperator {
     #[reflect(ignore)]
@@ -108,7 +108,7 @@ impl EnterOperator {
 /// This system is guaranteed to run even if the plan is replaced.
 #[derive(Component, Reflect)]
 #[reflect(Component)]
-#[component(on_insert = Self::on_insert_hook, on_replace = Self::on_replace_hook)]
+#[component(on_insert = Self::on_insert_hook, on_discard = Self::on_replace_hook)]
 #[require(BaeTaskPresent, EnterOperator)]
 pub struct ExitOperator {
     #[reflect(ignore)]

@@ -84,7 +84,6 @@ use std::ops::{Add, AddAssign, Div, DivAssign, Index, IndexMut, Mul, MulAssign, 
 use std::sync::LazyLock;
 
 use bevy_ecs::component::Component;
-use bevy_ecs::resource::Resource;
 use estr::Estr;
 
 mod ext;
@@ -790,7 +789,7 @@ impl DivAssign<Value> for Value {
 /// When accessing a property, if a value has not been set or has the wrong
 /// type, the property should be treated as if it has the default value of the
 /// correct type. For example, toggling a
-#[derive(Component, Resource, Default, Clone, Debug)]
+#[derive(Component, Default, Clone, Debug)]
 pub struct Props {
     properties: BTreeMap<Estr, Value>,
 }

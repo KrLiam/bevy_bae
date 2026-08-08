@@ -13,12 +13,12 @@ keywords = ["bevy", "ai", "htn"]
 categories = ["game-development"]
 
 [dependencies]
-bevy_ecs = { version = "0.18", default-features = false, features = ["bevy_reflect"] }
-bevy_app = { version = "0.18", default-features = false }
-bevy_reflect = { version = "0.18", default-features = false }
-bevy_derive = { version = "0.18", default-features = false }
-bevy_ptr = { version = "0.18", default-features = false }
-bevy_utils = { version = "0.18", default-features = false }
+bevy_ecs = { version = "0.19", default-features = false, features = ["bevy_reflect"] }
+bevy_app = { version = "0.19", default-features = false }
+bevy_reflect = { version = "0.19", default-features = false }
+bevy_derive = { version = "0.19", default-features = false }
+bevy_ptr = { version = "0.19", default-features = false }
+bevy_utils = { version = "0.19", default-features = false }
 tracing = "0.1"
 
 estr = { version = "1" }
@@ -27,7 +27,7 @@ disqualified = "1.0.0"
 smallvec = "1.15.2"
 
 [dev-dependencies]
-bevy = { version = "0.18", default-features = true, features = ["track_location"] }
+bevy = { version = "0.19", default-features = true, features = ["track_location"] }
 criterion = "0.8.2"
 
 [lints.rust]
